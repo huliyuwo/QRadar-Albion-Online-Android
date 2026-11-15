@@ -27,6 +27,19 @@ import com.minhui.vpn.Handlers.MainHandler;
 
 public class RadarDrawView extends Service
 {
+    private static RadarDrawView sInstance;
+
+    /** 正在运行的悬浮窗服务实例（未运行时为 null），供首页设置页实时调节悬浮窗。 */
+    public static RadarDrawView getInstance()
+    {
+        return sInstance;
+    }
+
+    public RadarView getRadarView()
+    {
+        return radarDrawView;
+    }
+
     private WindowManager windowManager;
     private View overlayView;
     private View overlaySettingsView;
@@ -62,6 +75,7 @@ public class RadarDrawView extends Service
         */
 
         radarDrawViewPseudoSingleton = this;
+        sInstance = this;
 
         windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
 
@@ -98,6 +112,8 @@ public class RadarDrawView extends Service
     public void onDestroy()
     {
         super.onDestroy();
+
+        sInstance = null;
 
         windowManager.removeView(overlayView);
 

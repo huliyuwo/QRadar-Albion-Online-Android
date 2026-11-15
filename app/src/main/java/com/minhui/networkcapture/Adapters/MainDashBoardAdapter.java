@@ -17,6 +17,7 @@ import com.minhui.networkcapture.RadarActivities.ChestsActivity;
 import com.minhui.networkcapture.RadarActivities.HarvestingActivity;
 import com.minhui.networkcapture.RadarActivities.MobsActivity;
 import com.minhui.networkcapture.RadarActivities.PvPActivity;
+import com.minhui.networkcapture.RadarActivities.SettingsActivity;
 
 import java.util.List;
 
@@ -88,6 +89,11 @@ public class MainDashBoardAdapter extends RecyclerView.Adapter<MainDashBoardAdap
                     case 3:
                         Intent chestsActivity = new Intent(mContext, ChestsActivity.class);
                         mContext.startActivity(chestsActivity);
+                        break;
+
+                    case 4:
+                        Intent settingsActivity = new Intent(mContext, SettingsActivity.class);
+                        mContext.startActivity(settingsActivity);
                         break;
                 }
             //    Toast.makeText(v.getContext(), "Clicked -> " + getAdapterPosition(), Toast.LENGTH_SHORT).show();

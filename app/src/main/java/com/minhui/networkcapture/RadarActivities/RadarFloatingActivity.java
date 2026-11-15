@@ -22,7 +22,6 @@ import com.minhui.networkcapture.Fragments.ChestsFragment;
 import com.minhui.networkcapture.Fragments.HarvestingFragment;
 import com.minhui.networkcapture.Fragments.MobsFragment;
 import com.minhui.networkcapture.Fragments.PvPFragment;
-import com.minhui.networkcapture.Fragments.SettingsFragment;
 import com.minhui.networkcapture.R;
 import com.minhui.networkcapture.RadarDrawView;
 import com.minhui.networkcapture.RadarView.RadarView;
@@ -49,6 +48,8 @@ public class RadarFloatingActivity
         TextView tab3 = view.findViewById(R.id.tab3);
         TextView tab4 = view.findViewById(R.id.tab4);
         TextView tab5 = view.findViewById(R.id.tab5);
+        // 设置（含 mihomo/代理操作）已移到首页"设置"入口，悬浮窗面板只保留雷达调节
+        tab5.setVisibility(View.GONE);
 
         contentLayout = view.findViewById(R.id.content_layout);
 
@@ -112,19 +113,6 @@ public class RadarFloatingActivity
             tab5.setBackgroundColor(view14.getContext().getColor(R.color.background));
 
             new ChestsFragment(contentLayout);
-        });
-
-        tab5.setOnClickListener(view15 ->
-        {
-            switchContent(R.layout.fragment_settings);
-
-            tab1.setBackgroundColor(view15.getContext().getColor(R.color.background));
-            tab2.setBackgroundColor(view15.getContext().getColor(R.color.background));
-            tab3.setBackgroundColor(view15.getContext().getColor(R.color.background));
-            tab4.setBackgroundColor(view15.getContext().getColor(R.color.background));
-            tab5.setBackgroundColor(view15.getContext().getColor(R.color.dashboard));
-
-            new SettingsFragment(contentLayout, radarView , radarDrawView);
         });
     }
 }

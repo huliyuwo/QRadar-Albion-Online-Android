@@ -49,6 +49,10 @@
           android:theme="@style/ToolbarTheme"
           android:screenOrientation="fullSensor" />
 
+      <activity
+          android:name="com.minhui.networkcapture.RadarActivities.SettingsActivity"
+          android:theme="@style/ToolbarTheme"/>
+
         <service
             android:name=".RadarDrawView"
             android:enabled="true"
