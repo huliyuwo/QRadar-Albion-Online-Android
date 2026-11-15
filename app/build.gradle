@@ -3,12 +3,12 @@ plugins {
 }
 
 android {
-    compileSdkVersion 33
-    buildToolsVersion "33.0.0"
+    compileSdkVersion 34
+    buildToolsVersion "34.0.0"
 
     defaultConfig {
         applicationId "com.qradar.albion"
-        minSdkVersion 21
+        minSdkVersion 24
         targetSdkVersion 33
         versionCode 1
         versionName "1.0"
@@ -70,4 +70,10 @@ dependencies {
     // 如果 bugly 在 mavenCentral 找不到，确保顶层 build.gradle 加了 jitpack
     implementation 'com.tencent.bugly:crashreport:latest.release'
     implementation 'com.squareup.okhttp3:okhttp:4.11.0'
+    // 修复：补齐 app 实际引用但未声明的依赖
+    implementation project(':vpnadaptercore')
+    implementation 'com.google.code.gson:gson:2.9.0'
+    implementation 'org.greenrobot:eventbus:3.3.1'
+    implementation 'org.jsoup:jsoup:1.17.2'
+    implementation 'com.squareup.okhttp:okhttp:2.7.5'
 }
