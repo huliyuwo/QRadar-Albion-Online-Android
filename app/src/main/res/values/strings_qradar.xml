@@ -101,7 +101,7 @@
     <string name="qr_chinese">Chinese</string>
     <string name="qr_english">English</string>
     <string name="qr_harvest_card">Harvesting</string>
-    <string name="qr_upstream_proxy">Upstream proxy (SOCKS5, e.g. Termux mihomo 127.0.0.1:7897)</string>
+    <string name="qr_upstream_proxy">Use proxy (ON: route traffic via built-in mihomo node; OFF: direct connection)</string>
     <string name="qr_refresh_subscription">Refresh subscription</string>
     <string name="qr_switch_node">Switch proxy node</string>
     <string name="qr_select_node">Select node</string>
@@ -110,4 +110,12 @@
     <string name="qr_subscription_updated">Subscription updated (%1$d provider(s))</string>
     <string name="qr_node_switched">Switched to %1$s</string>
     <string name="qr_api_error">mihomo API error: %1$s</string>
+    <string name="qr_subscription_url_hint">Subscription URL (paste your airport link here to configure built-in mihomo)</string>
+    <string name="qr_save_subscription">Save &amp; apply</string>
+    <string name="qr_subscription_saved">Saved, restarting built-in mihomo…</string>
+    <string name="qr_subscription_empty">Subscription URL is empty</string>
+    <string name="qr_mihomo_status_running">Built-in mihomo: running</string>
+    <string name="qr_mihomo_status_stopped">Built-in mihomo: stopped</string>
+    <string name="qr_mihomo_status_not_configured">Built-in mihomo: subscription URL not set</string>
+    <string name="qr_mihomo_status_unavailable">Built-in mihomo: unavailable on this device (arm64 required)</string>
 </resources>

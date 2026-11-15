@@ -66,6 +66,40 @@
                     android:textColor="@color/white_FFFFFFFF" />
             </LinearLayout>
 
+            <EditText
+                android:id="@+id/etSubscriptionUrl"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="5dp"
+                android:background="@color/dashboard"
+                android:hint="@string/qr_subscription_url_hint"
+                android:inputType="textUri|textMultiLine"
+                android:maxLines="3"
+                android:padding="8dp"
+                android:textColor="@color/white_FFFFFFFF"
+                android:textColorHint="@color/gray"
+                android:textSize="13dp"
+                android:importantForAutofill="no" />
+
+            <Button
+                android:id="@+id/btnSaveSubscription"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="5dp"
+                android:background="@color/dashboard"
+                android:text="@string/qr_save_subscription"
+                android:textColor="@color/white_FFFFFFFF" />
+
+            <TextView
+                android:id="@+id/tvMihomoStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="5dp"
+                android:gravity="center"
+                android:text="@string/qr_mihomo_status_stopped"
+                android:textColor="@color/gray"
+                android:textSize="13dp" />
+
             <Button
                 android:layout_width="wrap_content"
                 android:gravity="center"

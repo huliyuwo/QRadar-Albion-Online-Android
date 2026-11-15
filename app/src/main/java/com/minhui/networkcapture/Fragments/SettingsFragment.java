@@ -7,6 +7,7 @@ import android.preference.PreferenceManager;
 import android.view.View;
 import android.widget.Button;
 import android.widget.CheckBox;
+import android.widget.EditText;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -19,6 +20,7 @@ import com.minhui.networkcapture.RadarDrawView;
 import com.minhui.networkcapture.RadarView.RadarSettings;
 import com.minhui.networkcapture.RadarView.RadarView;
 import com.minhui.networkcapture.Utils.MihomoApiClient;
+import com.minhui.networkcapture.Utils.MihomoProcessManager;
 import com.minhui.vpn.Handlers.MainHandler;
 import com.minhui.vpn.proxy.UpstreamProxyConfig;
 
@@ -56,8 +58,25 @@ public class SettingsFragment extends Fragment
         UpstreamProxyConfig.load(view.getContext());
         upstreamProxySwitch.setChecked(UpstreamProxyConfig.isEnabled());
         upstreamProxySwitch.setOnCheckedChangeListener((buttonView, isChecked) ->
-                UpstreamProxyConfig.save(view.getContext(), isChecked,
-                        UpstreamProxyConfig.getHost(), UpstreamProxyConfig.getPort()));
+        {
+            UpstreamProxyConfig.save(view.getContext(), isChecked,
+                    UpstreamProxyConfig.getHost(), UpstreamProxyConfig.getPort());
+
+            if (isChecked)
+            {
+                // 打开：走内置 mihomo 代理，确保它在跑
+                MihomoProcessManager.getInstance().startAsync();
+            }
+            else
+            {
+                // 关闭：直连模式，停掉 mihomo 省电
+                MihomoProcessManager.getInstance().stopAsync();
+            }
+
+            // 启动/停止是异步的，延时刷新状态行
+            view.postDelayed(() -> updateMihomoStatus(MihomoProcessManager.getInstance(),
+                    view.findViewById(R.id.tvMihomoStatus)), 1500);
+        });
 
         TextView currentNodeText = view.findViewById(R.id.tvCurrentNode);
         Button refreshSubscription = view.findViewById(R.id.btnRefreshSubscription);
@@ -143,6 +162,57 @@ public class SettingsFragment extends Fragment
             public void onError(String message)
             {
                 currentNodeText.setText(R.string.qr_current_node_unknown);
+            }
+        });
+
+        MihomoProcessManager mihomoManager = MihomoProcessManager.getInstance();
+        EditText subscriptionUrlInput = view.findViewById(R.id.etSubscriptionUrl);
+        Button saveSubscription = view.findViewById(R.id.btnSaveSubscription);
+        TextView mihomoStatusText = view.findViewById(R.id.tvMihomoStatus);
+
+        subscriptionUrlInput.setText(mihomoManager.getSubscriptionUrl());
+        updateMihomoStatus(mihomoManager, mihomoStatusText);
+
+        saveSubscription.setOnClickListener(v ->
+        {
+            String url = subscriptionUrlInput.getText().toString().trim();
+
+            if (url.isEmpty())
+            {
+                Toast.makeText(appContext, R.string.qr_subscription_empty, Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            mihomoManager.saveSubscriptionUrl(url);
+
+            if (UpstreamProxyConfig.isEnabled())
+            {
+                mihomoManager.restartAsync();
+            }
+            Toast.makeText(appContext, R.string.qr_subscription_saved, Toast.LENGTH_SHORT).show();
+
+            // mihomo 重启需要一点时间，延时刷新状态与当前节点
+            for (long delay : new long[]{1500L, 4000L})
+            {
+                mihomoStatusText.postDelayed(() ->
+                {
+                    updateMihomoStatus(mihomoManager, mihomoStatusText);
+
+                    MihomoApiClient.fetchSelectorGroup(new MihomoApiClient.Callback<MihomoApiClient.NodeGroup>()
+                    {
+                        @Override
+                        public void onSuccess(MihomoApiClient.NodeGroup group)
+                        {
+                            currentNodeText.setText(appContext.getString(R.string.qr_current_node, group.now));
+                        }
+
+                        @Override
+                        public void onError(String message)
+                        {
+                            // 还没起来就等下一轮刷新
+                        }
+                    });
+                }, delay);
             }
         });
 
@@ -931,5 +1001,35 @@ public class SettingsFragment extends Fragment
                 editor.apply();
             }
         });
+    }
+
+    private static void updateMihomoStatus(MihomoProcessManager manager, TextView statusText)
+    {
+        int textRes;
+        boolean running;
+
+        if (!manager.isBinaryAvailable())
+        {
+            textRes = R.string.qr_mihomo_status_unavailable;
+            running = false;
+        }
+        else if (!manager.isConfigured())
+        {
+            textRes = R.string.qr_mihomo_status_not_configured;
+            running = false;
+        }
+        else if (manager.isRunning())
+        {
+            textRes = R.string.qr_mihomo_status_running;
+            running = true;
+        }
+        else
+        {
+            textRes = R.string.qr_mihomo_status_stopped;
+            running = false;
+        }
+
+        statusText.setText(textRes);
+        statusText.setTextColor(Color.parseColor(running ? "#00FF00" : "#808080"));
     }
 }

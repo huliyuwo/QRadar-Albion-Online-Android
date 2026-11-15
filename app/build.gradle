@@ -61,6 +61,14 @@ android {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
     }
+
+    packagingOptions {
+        jniLibs {
+            // libmihomo.so 需要在安装时解压到 nativeLibraryDir 才能作为可执行文件运行
+            // （Android 10+ 禁止执行应用可写数据目录中的文件，nativeLibraryDir 是例外）
+            useLegacyPackaging = true
+        }
+    }
 }
 
 dependencies {

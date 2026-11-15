@@ -101,7 +101,7 @@
     <string name="qr_chinese">中文</string>
     <string name="qr_english">English</string>
     <string name="qr_harvest_card">采集</string>
-    <string name="qr_upstream_proxy">上游代理（SOCKS5，如 Termux mihomo 127.0.0.1:7897）</string>
+    <string name="qr_upstream_proxy">使用代理上网（开：流量经内置 mihomo 节点转发；关：直连）</string>
     <string name="qr_refresh_subscription">立即刷新订阅</string>
     <string name="qr_switch_node">切换代理节点</string>
     <string name="qr_select_node">选择节点</string>
@@ -110,4 +110,12 @@
     <string name="qr_subscription_updated">订阅已更新（%1$d 个 provider）</string>
     <string name="qr_node_switched">已切换到 %1$s</string>
     <string name="qr_api_error">mihomo 接口错误：%1$s</string>
+    <string name="qr_subscription_url_hint">订阅链接（粘贴机场订阅地址，自动配置内置 mihomo）</string>
+    <string name="qr_save_subscription">保存并生效</string>
+    <string name="qr_subscription_saved">已保存，正在重启内置 mihomo…</string>
+    <string name="qr_subscription_empty">订阅链接为空</string>
+    <string name="qr_mihomo_status_running">内置 mihomo：运行中</string>
+    <string name="qr_mihomo_status_stopped">内置 mihomo：未运行</string>
+    <string name="qr_mihomo_status_not_configured">内置 mihomo：尚未填写订阅链接</string>
+    <string name="qr_mihomo_status_unavailable">内置 mihomo：本设备不可用（需要 arm64）</string>
 </resources>

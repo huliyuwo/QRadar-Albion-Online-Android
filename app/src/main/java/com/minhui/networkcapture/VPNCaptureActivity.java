@@ -42,7 +42,9 @@ import androidx.viewpager.widget.ViewPager;
 import com.google.android.material.tabs.TabLayout;
 import com.minhui.networkcapture.Fragments.MainFragment;
 import com.minhui.networkcapture.RadarView.RadarSettings;
+import com.minhui.networkcapture.Utils.MihomoProcessManager;
 import com.minhui.vpn.ProxyConfig;
+import com.minhui.vpn.proxy.UpstreamProxyConfig;
 import com.minhui.vpn.utils.DebugLog;
 import com.minhui.vpn.utils.VpnServiceHelper;
 
@@ -95,7 +97,12 @@ public class VPNCaptureActivity extends FragmentActivity
                 stopService(windowService);
             }
 
-            System.exit(0);
+            // 退出前杀掉内置 mihomo 子进程（stop 最多等 3s，放后台线程避免卡 UI）
+            new Thread(() ->
+            {
+                MihomoProcessManager.getInstance().stop();
+                System.exit(0);
+            }, "app-exit").start();
         }
         catch (Exception ex)
         {
@@ -164,6 +171,14 @@ public class VPNCaptureActivity extends FragmentActivity
 
         handler = new Handler();
         RadarSettings.getInstance().init(getApplicationContext());
+
+        // 仅当"使用代理"开关打开时才拉起内置 mihomo（直连模式不需要它跑）
+        MihomoProcessManager.getInstance().init(getApplicationContext());
+        UpstreamProxyConfig.load(this);
+        if (UpstreamProxyConfig.isEnabled())
+        {
+            MihomoProcessManager.getInstance().startAsync();
+        }
     }
     Intent windowService;
 
