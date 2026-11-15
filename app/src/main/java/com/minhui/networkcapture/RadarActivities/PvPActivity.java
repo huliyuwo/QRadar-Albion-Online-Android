@@ -43,7 +43,7 @@ public class PvPActivity extends AppCompatActivity
         setContentView(R.layout.activity_pvp);
 
         textView = findViewById(R.id.toolbarTitle);
-        textView.setText("PvP Settings");
+        textView.setText(getString(R.string.qr_pvp_settings));
 
         toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);

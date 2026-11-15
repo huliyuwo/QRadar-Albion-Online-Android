@@ -17,7 +17,7 @@
             android:id="@+id/toolbarTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Title"
+            android:text="@string/qr_title"
             android:textColor="@color/orange_F4840B"
             android:textSize="18dp" />
     </androidx.appcompat.widget.Toolbar>
@@ -33,7 +33,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Tier "
+            android:text="@string/qr_tier"
             android:textColor="@color/white_FFFFFFFF"
 
             android:textSize="20dp" />
@@ -246,7 +246,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Enchant "
+            android:text="@string/qr_enchant"
             android:textColor="@color/white_FFFFFFFF"
 
             android:textSize="20dp" />
@@ -398,7 +398,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Type "
+            android:text="@string/qr_type"
             android:textColor="@color/white_FFFFFFFF"
 
             android:textSize="20dp" />
@@ -414,7 +414,7 @@
                 android:id="@+id/text432View24312"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Fiber"
+                android:text="@string/qr_fiber"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -440,7 +440,7 @@
                 android:id="@+id/tex43241tView24312"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Wood "
+                android:text="@string/qr_wood"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -466,7 +466,7 @@
                 android:id="@+id/textView24312"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Ore "
+                android:text="@string/qr_ore"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -493,7 +493,7 @@
                 android:id="@+id/textView24312"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Rock "
+                android:text="@string/qr_rock"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -520,7 +520,7 @@
                 android:id="@+id/textView2412"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Hide "
+                android:text="@string/qr_hide"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -545,7 +545,7 @@
                 android:id="@+id/textView241212"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Fishing Zone "
+                android:text="@string/qr_fishing_zone_"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -563,7 +563,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Other "
+            android:text="@string/qr_other"
             android:textColor="@color/white_FFFFFFFF"
 
             android:textSize="20dp" />
@@ -579,7 +579,7 @@
                 android:id="@+id/har"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Size "
+                android:text="@string/qr_size"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"

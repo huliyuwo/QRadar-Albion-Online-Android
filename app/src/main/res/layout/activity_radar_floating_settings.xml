@@ -43,7 +43,7 @@
             android:textColor="@color/white_FFFFFFFF"
             android:padding="15dp"
 
-            android:text="PVP" />
+            android:text="@string/qr_pvp" />
 
         <TextView
             android:id="@+id/tab2"
@@ -56,7 +56,7 @@
             android:textColor="@color/white_FFFFFFFF"
             android:ellipsize="end"
             android:maxLines="1"
-            android:text="Harvest" />
+            android:text="@string/qr_harvest" />
 
         <TextView
             android:id="@+id/tab3"
@@ -69,7 +69,7 @@
             android:ellipsize="end"
             android:maxLines="1"
             android:textColor="@color/white_FFFFFFFF"
-            android:text="Mobs" />
+            android:text="@string/qr_mobs" />
 
 
         <TextView
@@ -84,7 +84,7 @@
             android:gravity="center"
             android:textColor="@color/white_FFFFFFFF"
             android:padding="15dp"
-            android:text="Chests" />
+            android:text="@string/qr_chests" />
 
         <TextView
             android:id="@+id/tab5"
@@ -97,7 +97,7 @@
             android:gravity="center"
             android:padding="15dp"
             android:textColor="@color/white_FFFFFFFF"
-            android:text="Settings" />
+            android:text="@string/qr_settings" />
 
 
     </LinearLayout>

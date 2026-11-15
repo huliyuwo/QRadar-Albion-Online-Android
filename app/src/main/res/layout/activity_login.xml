@@ -23,7 +23,7 @@
             android:id="@+id/linkDiscord"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Visit Example"
+            android:text="@string/qr_visit_example"
             android:textColor="@color/colorBlue"
             android:autoLink="all"
             />
@@ -34,7 +34,7 @@
             android:id="@+id/linkSite"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Visit Example"
+            android:text="@string/qr_visit_example"
             android:textColor="@color/colorBlue"
             android:autoLink="all"
             />
@@ -46,7 +46,7 @@
         <TextView
             android:layout_width="wrap_content"
 
-            android:text="QRadar"
+            android:text="@string/qr_app_short"
             android:textSize="45dp"
             android:textColor="@color/white_FFFFFFFF"
             android:textStyle="bold"
@@ -95,7 +95,7 @@
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
 
-                        android:hint="Username"
+                        android:hint="@string/qr_username"
                         android:inputType="textEmailAddress" />
 
                 </com.google.android.material.textfield.TextInputLayout>
@@ -120,7 +120,7 @@
 
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:hint="Password"
+                        android:hint="@string/qr_password"
 
 
                         android:inputType="textPassword" />
@@ -132,7 +132,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:text="Save password"
+                    android:text="@string/qr_save_password"
                     android:buttonTint="@color/gray"
                     android:textColor="#FFFFFF" />
 
@@ -149,7 +149,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="32dp"
                     app:backgroundTint="@color/background"
-                    android:text="Login"
+                    android:text="@string/qr_login"
                     android:textColor="@color/white_FFFFFFFF"
                     android:background="@color/toolbar"
                     app:cornerRadius="16dp" />

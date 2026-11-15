@@ -148,7 +148,7 @@ public class VPNCaptureActivity extends FragmentActivity
         DecimalFormat decimalFormat = new DecimalFormat("#.0");
         String formattedNumber = decimalFormat.format(daysAmount);
 
-        days.setText("Days left :" + formattedNumber);
+        days.setText(getString(R.string.qr_days_left_label) + formattedNumber);
 
         String login = getIntent().getStringExtra("login");
         String password = getIntent().getStringExtra("password");

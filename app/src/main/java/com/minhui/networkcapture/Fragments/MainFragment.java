@@ -35,11 +35,11 @@ public class MainFragment extends Fragment
         titles = new ArrayList<>();
         images = new ArrayList<>();
 
-        titles.add("PVP");
-        titles.add("Harvesting");
-        titles.add("Mobs");
-        titles.add("Chests");
-        titles.add("Settings");
+        titles.add(getString(R.string.qr_pvp));
+        titles.add(getString(R.string.qr_harvest_card));
+        titles.add(getString(R.string.qr_mobs));
+        titles.add(getString(R.string.qr_chests));
+        titles.add(getString(R.string.qr_settings));
 
         images.add(R.drawable.pvp);
         images.add(R.drawable.wheat);

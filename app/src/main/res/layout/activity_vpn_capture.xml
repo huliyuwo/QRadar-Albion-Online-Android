@@ -21,7 +21,7 @@
             android:layout_height="wrap_content"
 
 
-            android:text="Days left: "
+            android:text="@string/qr_days_left"
 
             android:textColor="@color/white_FFFFFFFF"
             android:layout_marginStart="10dp"
@@ -49,7 +49,7 @@
             android:layout_height="40dp"
             android:layout_centerHorizontal="true"
             android:gravity="center"
-            android:text="Albion QRadar"
+            android:text="@string/qr_app_title"
             android:textColor="@color/white_FFFFFFFF"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toStartOf="@+id/vpn"

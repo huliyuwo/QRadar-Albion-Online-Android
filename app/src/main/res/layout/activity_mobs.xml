@@ -18,7 +18,7 @@
             android:id="@+id/toolbarTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Title"
+            android:text="@string/qr_title"
             android:textColor="@color/orange_F4840B"
             android:textSize="18dp" />
 
@@ -35,7 +35,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Tier "
+            android:text="@string/qr_tier"
             android:textColor="@color/white_FFFFFFFF"
 
             android:textSize="20dp" />
@@ -248,7 +248,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Enchant "
+            android:text="@string/qr_enchant"
             android:textColor="@color/white_FFFFFFFF"
 
             android:textSize="20dp" />
@@ -401,7 +401,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Type "
+            android:text="@string/qr_type"
             android:textColor="@color/white_FFFFFFFF"
 
             android:textSize="20dp" />
@@ -417,7 +417,7 @@
                 android:id="@+id/tex543ie4312"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Harvestable"
+                android:text="@string/qr_harvestable"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -443,7 +443,7 @@
                 android:id="@+id/textView24312"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Skinnable "
+                android:text="@string/qr_skinnable"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -469,7 +469,7 @@
                 android:id="@+id/textView24312"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Other (no filter) "
+                android:text="@string/qr_other_no_filter"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -496,7 +496,7 @@
                 android:id="@+id/textView2312"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Boss (no filter) "
+                android:text="@string/qr_boss_no_filter"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
@@ -514,7 +514,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Rest "
+            android:text="@string/qr_rest"
             android:textColor="@color/white_FFFFFFFF"
 
             android:textSize="20dp" />
@@ -530,7 +530,7 @@
                 android:id="@+id/textView24312"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show hp "
+                android:text="@string/qr_show_hp"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"

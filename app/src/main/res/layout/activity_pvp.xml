@@ -18,7 +18,7 @@
             android:id="@+id/toolbarTitle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Title"
+            android:text="@string/qr_title"
             android:textColor="@color/orange_F4840B"
             android:textSize="18dp" />
 
@@ -43,7 +43,7 @@
                 android:id="@+id/textView"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show Dot"
+                android:text="@string/qr_show_dot"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -71,7 +71,7 @@
                 android:id="@+id/textView1"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show Nickname"
+                android:text="@string/qr_show_nickname"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
@@ -99,7 +99,7 @@
                 android:id="@+id/textView3"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show Health"
+                android:text="@string/qr_show_health"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
@@ -127,7 +127,7 @@
                 android:id="@+id/textView4"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show Mounted"
+                android:text="@string/qr_show_mounted"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />
@@ -155,7 +155,7 @@
                 android:id="@+id/textView5"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show Distance"
+                android:text="@string/qr_show_distance"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -184,7 +184,7 @@
                 android:id="@+id/texehrhgtView5"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show Guild"
+                android:text="@string/qr_show_guild"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent"
@@ -214,7 +214,7 @@
                 android:id="@+id/textView6"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Play Sound"
+                android:text="@string/qr_play_sound"
                 android:textColor="@color/white_FFFFFFFF"
                 app:layout_constraintBottom_toBottomOf="parent"
                 app:layout_constraintTop_toTopOf="parent" />

@@ -8,6 +8,9 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import androidx.appcompat.app.AlertDialog;
+import androidx.appcompat.app.AppCompatDelegate;
+import androidx.core.os.LocaleListCompat;
 import androidx.fragment.app.Fragment;
 import com.minhui.networkcapture.R;
 import com.minhui.networkcapture.RadarDrawView;
@@ -43,6 +46,35 @@ public class SettingsFragment extends Fragment
 
         resetRadar.setOnClickListener(view1 -> MainHandler.getInstance().clearAll());
 
+        TextView languageRow = view.findViewById(R.id.qrLanguageRow);
+        if (languageRow != null)
+        {
+            languageRow.setOnClickListener(v -> {
+                final String[] items = {
+                        v.getContext().getString(R.string.qr_follow_system),
+                        v.getContext().getString(R.string.qr_chinese),
+                        v.getContext().getString(R.string.qr_english)
+                };
+                new AlertDialog.Builder(v.getContext())
+                        .setTitle(R.string.qr_language)
+                        .setItems(items, (dialog, which) -> {
+                            if (which == 0)
+                            {
+                                AppCompatDelegate.setApplicationLocales(LocaleListCompat.getEmptyLocaleList());
+                            }
+                            else if (which == 1)
+                            {
+                                AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("zh-CN"));
+                            }
+                            else
+                            {
+                                AppCompatDelegate.setApplicationLocales(LocaleListCompat.forLanguageTags("en"));
+                            }
+                        })
+                        .show();
+            });
+        }
+
         pvpCircleLabel = view.findViewById(R.id.pvpCircleLabel);
         pvpCircleGapLabel = view.findViewById(R.id.pvpCircleGapLabel);
         pvpTextGapLabel = view.findViewById(R.id.pvpTextGapLabel);
@@ -53,14 +85,14 @@ public class SettingsFragment extends Fragment
         pvpTextGapBar = view.findViewById(R.id.pvpTextGapBar);
         pvpTextSizeBar = view.findViewById(R.id.pvpTextSizeBar);
 
-        pvpCircleLabel.setText("PvP circle size :" + RadarSettings.getInstance().pvpCircleBar);
+        pvpCircleLabel.setText(view.getContext().getString(R.string.qr_pvp_circle_size) + RadarSettings.getInstance().pvpCircleBar);
         pvpCircleBar.setProgress(RadarSettings.getInstance().pvpCircleBar);
         pvpCircleBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().pvpCircleBar = progress;
-                pvpCircleLabel.setText("PvP circle size :" + progress);
+                pvpCircleLabel.setText(view.getContext().getString(R.string.qr_pvp_circle_size) + progress);
             }
 
             @Override
@@ -78,7 +110,7 @@ public class SettingsFragment extends Fragment
             }
         });
 
-        pvpCircleGapLabel.setText("PvP circle gap :" + RadarSettings.getInstance().pvpCircleGapBar);
+        pvpCircleGapLabel.setText(view.getContext().getString(R.string.qr_pvp_circle_gap) + RadarSettings.getInstance().pvpCircleGapBar);
         pvpCircleGapBar.setProgress(RadarSettings.getInstance().pvpCircleGapBar);
 
         pvpCircleGapBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -87,7 +119,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().pvpCircleGapBar = progress;
-                pvpCircleGapLabel.setText("PvP circle gap :" + progress);
+                pvpCircleGapLabel.setText(view.getContext().getString(R.string.qr_pvp_circle_gap) + progress);
             }
 
             @Override
@@ -103,7 +135,7 @@ public class SettingsFragment extends Fragment
             }
         });
 
-        pvpTextGapLabel.setText("PvP text gap :" + RadarSettings.getInstance().pvpTextGapBar);
+        pvpTextGapLabel.setText(view.getContext().getString(R.string.qr_pvp_text_gap) + RadarSettings.getInstance().pvpTextGapBar);
         pvpTextGapBar.setProgress(RadarSettings.getInstance().pvpTextGapBar);
 
         pvpTextGapBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -112,7 +144,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().pvpTextGapBar = progress;
-                pvpTextGapLabel.setText("PvP text gap  :" + progress);
+                pvpTextGapLabel.setText(view.getContext().getString(R.string.qr_pvp_text_gap2) + progress);
             }
             @Override
             public void onStartTrackingTouch(SeekBar seekBar)
@@ -127,7 +159,7 @@ public class SettingsFragment extends Fragment
             }
         });
 
-        pvpTextSizeLabel.setText("PvP  text size :" + RadarSettings.getInstance().pvpTextSizeBar);
+        pvpTextSizeLabel.setText(view.getContext().getString(R.string.qr_pvp_text_size) + RadarSettings.getInstance().pvpTextSizeBar);
         pvpTextSizeBar.setProgress(RadarSettings.getInstance().pvpTextSizeBar);
 
         pvpTextSizeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -136,7 +168,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().pvpTextSizeBar = progress;
-                pvpTextSizeLabel.setText("PvP  text size :" + progress);
+                pvpTextSizeLabel.setText(view.getContext().getString(R.string.qr_pvp_text_size) + progress);
 
                 radarView.drawPlayers.setTextSize(progress);
             }
@@ -165,7 +197,7 @@ public class SettingsFragment extends Fragment
         harvestingIconTextSizeBar = view.findViewById(R.id.harvestingIconTextSizeBar);
 
         // For harvestingWidthHeightBar:
-        harvestingWidthHeightLabel.setText("Harvesting icon size:" + RadarSettings.getInstance().harvestingWidthHeightBar);
+        harvestingWidthHeightLabel.setText(view.getContext().getString(R.string.qr_harvest_icon_size) + RadarSettings.getInstance().harvestingWidthHeightBar);
         harvestingWidthHeightBar.setProgress(RadarSettings.getInstance().harvestingWidthHeightBar);
         harvestingWidthHeightBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
         {
@@ -173,7 +205,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().harvestingWidthHeightBar = progress;
-                harvestingWidthHeightLabel.setText("Harvesting icon size:" + progress);
+                harvestingWidthHeightLabel.setText(view.getContext().getString(R.string.qr_harvest_icon_size) + progress);
             }
 
             @Override
@@ -190,7 +222,7 @@ public class SettingsFragment extends Fragment
             }
         });
 
-        harvestingIconTextGapLabel.setText("Icon text gap :" + RadarSettings.getInstance().harvestingIconTextGapBar);
+        harvestingIconTextGapLabel.setText(view.getContext().getString(R.string.qr_icon_text_gap_label) + RadarSettings.getInstance().harvestingIconTextGapBar);
         harvestingIconTextGapBar.setProgress(RadarSettings.getInstance().harvestingIconTextGapBar);
         harvestingIconTextGapBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
         {
@@ -198,7 +230,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().harvestingIconTextGapBar = progress;
-                harvestingIconTextGapLabel.setText("Icon text gap :" + progress);
+                harvestingIconTextGapLabel.setText(view.getContext().getString(R.string.qr_icon_text_gap_label) + progress);
             }
 
             @Override
@@ -216,7 +248,7 @@ public class SettingsFragment extends Fragment
         });
 
         // For harvestingIconTextSizeBar:
-        harvestingIconTextSizeLabel.setText("Icon text size :" + RadarSettings.getInstance().harvestingIconTextSizeBar);
+        harvestingIconTextSizeLabel.setText(view.getContext().getString(R.string.qr_icon_text_size_label) + RadarSettings.getInstance().harvestingIconTextSizeBar);
         harvestingIconTextSizeBar.setProgress(RadarSettings.getInstance().harvestingIconTextSizeBar);
 
         harvestingIconTextSizeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -227,7 +259,7 @@ public class SettingsFragment extends Fragment
                 RadarSettings.getInstance().harvestingIconTextSizeBar = progress;
 
                 radarView.harvestingDraw.setTextSize(RadarSettings.getInstance().harvestingIconTextSizeBar);
-                harvestingIconTextSizeLabel.setText("Icon text size :" + progress);
+                harvestingIconTextSizeLabel.setText(view.getContext().getString(R.string.qr_icon_text_size_label) + progress);
             }
 
             @Override
@@ -254,7 +286,7 @@ public class SettingsFragment extends Fragment
         SeekBar mobTextGapBar = view.findViewById(R.id.mobTextGapBar);
         SeekBar mobTextSizeBar = view.findViewById(R.id.mobTextSizeBar);
 
-        mobIconWidthHeightLabel.setText("Mobs icon size :" + RadarSettings.getInstance().mobIconWidthHeightBar);
+        mobIconWidthHeightLabel.setText(view.getContext().getString(R.string.qr_mob_icon_size) + RadarSettings.getInstance().mobIconWidthHeightBar);
         mobIconWidthHeightBar.setProgress(RadarSettings.getInstance().mobIconWidthHeightBar);
         mobIconWidthHeightBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
         {
@@ -262,7 +294,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().mobIconWidthHeightBar = progress;
-                mobIconWidthHeightLabel.setText("Mobs icon size :" + progress);
+                mobIconWidthHeightLabel.setText(view.getContext().getString(R.string.qr_mob_icon_size) + progress);
             }
 
             @Override
@@ -280,7 +312,7 @@ public class SettingsFragment extends Fragment
         });
 
         // For mobRadarSizeBar:
-        mobRadarSizeLabel.setText("Circle size :" + RadarSettings.getInstance().mobRadarSizeBar);
+        mobRadarSizeLabel.setText(view.getContext().getString(R.string.qr_circle_size_label) + RadarSettings.getInstance().mobRadarSizeBar);
         mobRadarSizeBar.setProgress(RadarSettings.getInstance().mobRadarSizeBar);
 
         mobRadarSizeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -289,7 +321,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().mobRadarSizeBar = progress;
-                mobRadarSizeLabel.setText("Circle size :" + progress);
+                mobRadarSizeLabel.setText(view.getContext().getString(R.string.qr_circle_size_label) + progress);
             }
 
             @Override
@@ -307,7 +339,7 @@ public class SettingsFragment extends Fragment
         });
 
         // For mobTextGapBar:
-        mobTextGapLabel.setText("Text gap :" + RadarSettings.getInstance().mobTextGapBar);
+        mobTextGapLabel.setText(view.getContext().getString(R.string.qr_text_gap_label) + RadarSettings.getInstance().mobTextGapBar);
         mobTextGapBar.setProgress(RadarSettings.getInstance().mobTextGapBar);
 
         mobTextGapBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -316,7 +348,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().mobTextGapBar = progress;
-                mobTextGapLabel.setText("Text gap :" + progress);
+                mobTextGapLabel.setText(view.getContext().getString(R.string.qr_text_gap_label) + progress);
             }
 
             @Override
@@ -334,7 +366,7 @@ public class SettingsFragment extends Fragment
         });
 
         // For mobTextSizeBar:
-        mobTextSizeLabel.setText("Text size :" + RadarSettings.getInstance().mobTextSizeBar);
+        mobTextSizeLabel.setText(view.getContext().getString(R.string.qr_text_size_label) + RadarSettings.getInstance().mobTextSizeBar);
         mobTextSizeBar.setProgress(RadarSettings.getInstance().mobTextSizeBar);
 
         mobTextSizeBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -346,7 +378,7 @@ public class SettingsFragment extends Fragment
                 radarView.drawMobs.setTextSize(progress);
                 radarView.invalidate();
 
-                mobTextSizeLabel.setText("Text size :" + progress);
+                mobTextSizeLabel.setText(view.getContext().getString(R.string.qr_text_size_label) + progress);
             }
 
             @Override
@@ -366,7 +398,7 @@ public class SettingsFragment extends Fragment
         TextView chestIconWidthHeightLabel = view.findViewById(R.id.chestIconWidthHeightLabel);
         SeekBar chestIconWidthHeightBar = view.findViewById(R.id.chestIconWidthHeightBar);
 
-        chestIconWidthHeightLabel.setText("Chest icon size :"+RadarSettings.getInstance().chestIconWidthHeightBar);
+        chestIconWidthHeightLabel.setText(view.getContext().getString(R.string.qr_chest_icon_size)+RadarSettings.getInstance().chestIconWidthHeightBar);
         chestIconWidthHeightBar.setProgress(RadarSettings.getInstance().chestIconWidthHeightBar);
         chestIconWidthHeightBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
         {
@@ -374,7 +406,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().chestIconWidthHeightBar = progress;
-                chestIconWidthHeightLabel.setText("Chest icon size :"+progress);
+                chestIconWidthHeightLabel.setText(view.getContext().getString(R.string.qr_chest_icon_size)+progress);
             }
 
             @Override
@@ -396,7 +428,7 @@ public class SettingsFragment extends Fragment
 
         int firstTime = (int) (RadarSettings.getInstance().radarScaleBar * 100);
         String text = String.format("%.2f", RadarSettings.getInstance().radarScaleBar);
-        radarScaleLabel.setText("Radar distance scale :"+text);
+        radarScaleLabel.setText(view.getContext().getString(R.string.qr_radar_scale_label)+text);
         radarScaleBar.setProgress(firstTime);
 
         radarScaleBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -408,7 +440,7 @@ public class SettingsFragment extends Fragment
                 radarDrawView.reInitMatrix();
                 RadarSettings.getInstance().radarScaleBar = totalProgress;
 
-                radarScaleLabel.setText("Radar distance scale :"+totalProgress);
+                radarScaleLabel.setText(view.getContext().getString(R.string.qr_radar_scale_label)+totalProgress);
             }
 
             @Override
@@ -430,7 +462,7 @@ public class SettingsFragment extends Fragment
         TextView radarSizeWidthHeightLabel = view.findViewById(R.id.radarSizeWidthHeightLabel);
         SeekBar radarSizeWidthHeightBar = view.findViewById(R.id.radarSizeWidthHeightBar);
 
-        radarSizeWidthHeightLabel.setText("Radar size :"+RadarSettings.getInstance().radarSizeWidthHeightBar);
+        radarSizeWidthHeightLabel.setText(view.getContext().getString(R.string.qr_radar_size_label)+RadarSettings.getInstance().radarSizeWidthHeightBar);
         radarSizeWidthHeightBar.setProgress(RadarSettings.getInstance().radarSizeWidthHeightBar);
         radarSizeWidthHeightBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
         {
@@ -440,7 +472,7 @@ public class SettingsFragment extends Fragment
                 radarDrawView.setRadarSize(progress);
 
                 RadarSettings.getInstance().radarSizeWidthHeightBar = progress;
-                radarSizeWidthHeightLabel.setText("Radar size :"+progress);
+                radarSizeWidthHeightLabel.setText(view.getContext().getString(R.string.qr_radar_size_label)+progress);
             }
 
             @Override
@@ -460,7 +492,7 @@ public class SettingsFragment extends Fragment
         TextView radarMiddleCircleLabel = view.findViewById(R.id.radarMiddleCircleLabel);
         SeekBar radarMiddleCircleBar = view.findViewById(R.id.radarMiddleCircleBar);
 
-        radarMiddleCircleLabel.setText("Radar middle circle size  :"+RadarSettings.getInstance().radarMiddleCircleBar);
+        radarMiddleCircleLabel.setText(view.getContext().getString(R.string.qr_radar_mid_circle2)+RadarSettings.getInstance().radarMiddleCircleBar);
         radarMiddleCircleBar.setProgress(RadarSettings.getInstance().radarMiddleCircleBar);
 
         radarMiddleCircleBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -469,7 +501,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().radarMiddleCircleBar = progress;
-                radarMiddleCircleLabel.setText("Radar middle circle size :"+progress);
+                radarMiddleCircleLabel.setText(view.getContext().getString(R.string.qr_radar_mid_circle)+progress);
 
                 radarView.invalidate();
             }
@@ -524,7 +556,7 @@ public class SettingsFragment extends Fragment
         TextView radarCircleSquareBorderLabel = view.findViewById(R.id.radarCircleSquareBorderLabel);
         SeekBar radarCircleSquareBorderBar = view.findViewById(R.id.radarCircleSquareBorderBar);
 
-        radarCircleSquareBorderLabel.setText("Radar shapes border size :"+RadarSettings.getInstance().radarCircleSquareBorderBar);
+        radarCircleSquareBorderLabel.setText(view.getContext().getString(R.string.qr_radar_border)+RadarSettings.getInstance().radarCircleSquareBorderBar);
         radarCircleSquareBorderBar.setProgress(RadarSettings.getInstance().radarCircleSquareBorderBar);
 
         radarCircleSquareBorderBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -535,7 +567,7 @@ public class SettingsFragment extends Fragment
                 radarView.setBorderSize((int) progress);
                 RadarSettings.getInstance().radarCircleSquareBorderBar = progress;
 
-                radarCircleSquareBorderLabel.setText("Radar shapes border size :"+progress);
+                radarCircleSquareBorderLabel.setText(view.getContext().getString(R.string.qr_radar_border)+progress);
                 radarView.invalidate();
             }
 
@@ -556,7 +588,7 @@ public class SettingsFragment extends Fragment
         TextView radarXLabel = view.findViewById(R.id.radarXLabel);
         SeekBar radarXBar = view.findViewById(R.id.radarXBar);
 
-        radarXLabel.setText("Radar x :"+RadarSettings.getInstance().radarXBar);
+        radarXLabel.setText(view.getContext().getString(R.string.qr_radar_x_label)+RadarSettings.getInstance().radarXBar);
         radarXBar.setProgress(RadarSettings.getInstance().radarXBar);
 
         radarXBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -567,7 +599,7 @@ public class SettingsFragment extends Fragment
                 radarDrawView.setRadarX(progress);
 
                 RadarSettings.getInstance().radarXBar = progress;
-                radarXLabel.setText("Radar x :"+progress);
+                radarXLabel.setText(view.getContext().getString(R.string.qr_radar_x_label)+progress);
             }
 
             @Override
@@ -587,7 +619,7 @@ public class SettingsFragment extends Fragment
         TextView radarYLabel = view.findViewById(R.id.radarYLabel);
         SeekBar radarYBar = view.findViewById(R.id.radarYBar);
 
-        radarYLabel.setText("Radar y :" + RadarSettings.getInstance().radarYBar);
+        radarYLabel.setText(view.getContext().getString(R.string.qr_radar_y_label) + RadarSettings.getInstance().radarYBar);
         radarYBar.setProgress(RadarSettings.getInstance().radarYBar);
 
         radarYBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -597,7 +629,7 @@ public class SettingsFragment extends Fragment
             {
                 radarDrawView.setRadarY(progress);
                 RadarSettings.getInstance().radarYBar = progress;
-                radarYLabel.setText("Radar y :" + progress);
+                radarYLabel.setText(view.getContext().getString(R.string.qr_radar_y_label) + progress);
             }
 
             @Override
@@ -617,7 +649,7 @@ public class SettingsFragment extends Fragment
         TextView settingsWidthLabel = view.findViewById(R.id.settingsWidthLabel);
         SeekBar settingsWidthBar = view.findViewById(R.id.settingsWidthBar);
 
-        settingsWidthLabel.setText("Settings width :"+RadarSettings.getInstance().settingsWidthBar);
+        settingsWidthLabel.setText(view.getContext().getString(R.string.qr_settings_width_label)+RadarSettings.getInstance().settingsWidthBar);
         settingsWidthBar.setProgress(RadarSettings.getInstance().settingsWidthBar);
 
         settingsWidthBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -626,7 +658,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().settingsWidthBar = progress;
-                settingsWidthLabel.setText("Settings width :"+progress);
+                settingsWidthLabel.setText(view.getContext().getString(R.string.qr_settings_width_label)+progress);
 
                 radarDrawView.setSettingsWidth(progress);
             }
@@ -648,7 +680,7 @@ public class SettingsFragment extends Fragment
         TextView settingsHeightLabel = view.findViewById(R.id.settingsHeightLabel);
         SeekBar settingsHeightBar = view.findViewById(R.id.settingsHeightBar);
 
-        settingsHeightLabel.setText("Settings height :"+RadarSettings.getInstance().settingsHeightBar);
+        settingsHeightLabel.setText(view.getContext().getString(R.string.qr_settings_height_label)+RadarSettings.getInstance().settingsHeightBar);
         settingsHeightBar.setProgress(RadarSettings.getInstance().settingsHeightBar);
 
         settingsHeightBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -657,7 +689,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().settingsHeightBar = progress;
-                settingsHeightLabel.setText("Settings height :" + progress);
+                settingsHeightLabel.setText(view.getContext().getString(R.string.qr_settings_height_label) + progress);
                 radarDrawView.setSettingsHeight(progress);
             }
 
@@ -678,7 +710,7 @@ public class SettingsFragment extends Fragment
         TextView floatingWidthHeightLabel  = view.findViewById(R.id.floatingWidthHeightLabel);
         SeekBar floatingWidthHeightBar = view.findViewById(R.id.floatingWidthHeightBar);
 
-        floatingWidthHeightLabel.setText("Floating icon size :"+RadarSettings.getInstance().floatingWidthHeightBar);
+        floatingWidthHeightLabel.setText(view.getContext().getString(R.string.qr_floating_icon_size)+RadarSettings.getInstance().floatingWidthHeightBar);
         floatingWidthHeightBar.setProgress(RadarSettings.getInstance().floatingWidthHeightBar);
 
         floatingWidthHeightBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -687,7 +719,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().floatingWidthHeightBar = progress;
-                floatingWidthHeightLabel.setText("Floating icon size :"+progress);
+                floatingWidthHeightLabel.setText(view.getContext().getString(R.string.qr_floating_icon_size)+progress);
 
                 radarDrawView.setFloatingSize(progress);
             }
@@ -709,7 +741,7 @@ public class SettingsFragment extends Fragment
         TextView floatingXLabel = view.findViewById(R.id.floatingXLabel);
         SeekBar floatingXBar = view.findViewById(R.id.floatingXBar);
 
-        floatingXLabel.setText("Floating x :"+RadarSettings.getInstance().floatingXBar);
+        floatingXLabel.setText(view.getContext().getString(R.string.qr_floating_x_label)+RadarSettings.getInstance().floatingXBar);
         floatingXBar.setProgress(RadarSettings.getInstance().floatingXBar);
 
         floatingXBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -718,7 +750,7 @@ public class SettingsFragment extends Fragment
             public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser)
             {
                 RadarSettings.getInstance().floatingXBar = progress;
-                floatingXLabel.setText("Floating x :"+progress);
+                floatingXLabel.setText(view.getContext().getString(R.string.qr_floating_x_label)+progress);
 
                 radarDrawView.setFloatingX(progress);
             }
@@ -740,7 +772,7 @@ public class SettingsFragment extends Fragment
         TextView floatingYLabel = view.findViewById(R.id.floatingYLabel);
         SeekBar floatingYBar = view.findViewById(R.id.floatingYBar);
 
-        floatingYLabel.setText("Floating y :"+RadarSettings.getInstance().floatingYBar);
+        floatingYLabel.setText(view.getContext().getString(R.string.qr_floating_y_label)+RadarSettings.getInstance().floatingYBar);
         floatingYBar.setProgress(RadarSettings.getInstance().floatingYBar);
 
         floatingYBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -750,7 +782,7 @@ public class SettingsFragment extends Fragment
             {
                 RadarSettings.getInstance().floatingYBar = progress;
 
-                floatingYLabel.setText("Floating y :" + progress);
+                floatingYLabel.setText(view.getContext().getString(R.string.qr_floating_y_label) + progress);
                 radarDrawView.setFloatingY(progress);
             }
 
@@ -771,7 +803,7 @@ public class SettingsFragment extends Fragment
         TextView settingsTransparencyLabel = view.findViewById(R.id.settingsTransparencyLabel);
         SeekBar settingsTransparencyBar = view.findViewById(R.id.settingsTransparencyBar);
 
-        settingsTransparencyLabel.setText("Settings transparency :"+RadarSettings.getInstance().settingsTransparencyBar);
+        settingsTransparencyLabel.setText(view.getContext().getString(R.string.qr_settings_transparency_label)+RadarSettings.getInstance().settingsTransparencyBar);
         settingsTransparencyBar.setProgress(RadarSettings.getInstance().settingsTransparencyBar);
 
         settingsTransparencyBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener()
@@ -782,7 +814,7 @@ public class SettingsFragment extends Fragment
                 int color = Color.argb(progress,0,0,0);
 
                 RadarSettings.getInstance().settingsTransparencyBar = progress;
-                settingsTransparencyLabel.setText("Settings transparency :" + progress);
+                settingsTransparencyLabel.setText(view.getContext().getString(R.string.qr_settings_transparency_label) + progress);
                 radarDrawView.setTransparencySettings(color);
             }
 

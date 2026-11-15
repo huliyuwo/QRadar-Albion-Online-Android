@@ -58,7 +58,7 @@ public class HarvestingActivity extends AppCompatActivity
         setContentView(R.layout.activity_harvesting);
         @SuppressLint("CommitPrefEdits") SharedPreferences.Editor editor = sharedPreferences.edit();
         textView = findViewById(R.id.toolbarTitle);
-        textView.setText("Harvesting Settings");
+        textView.setText(getString(R.string.qr_harvesting_settings));
 
         toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);

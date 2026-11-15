@@ -30,20 +30,20 @@
                 android:paddingRight="5dp"
                 android:background="@color/dashboard"
                 android:layout_gravity="center"
-                android:text="RESET DRAWINGS"
+                android:text="@string/qr_reset_drawings"
                 android:textColor="@color/white_FFFFFFFF"
                 android:layout_height="wrap_content"/>
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="PvP Settings"
+                android:text="@string/qr_pvp_settings"
                 android:textSize="17dp"
                 android:textColor="@color/white_FFFFFFFF"
                 android:layout_height="wrap_content"/>
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Circle scale "
+                android:text="@string/qr_circle_scale"
                 android:id="@+id/pvpCircleLabel"
                 android:layout_gravity="center"
 
@@ -63,7 +63,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Circle gap "
+                android:text="@string/qr_circle_gap"
                 android:id="@+id/pvpCircleGapLabel"
                 android:layout_gravity="center"
 
@@ -84,7 +84,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Text gap"
+                android:text="@string/qr_text_gap"
                 android:id="@+id/pvpTextGapLabel"
                 android:layout_gravity="center"
 
@@ -104,7 +104,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Text size"
+                android:text="@string/qr_text_size"
                 android:id="@+id/pvpTextSizeLabel"
                 android:layout_gravity="center"
 
@@ -124,7 +124,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Harvesting Settings"
+                android:text="@string/qr_harvesting_settings"
                 android:textSize="17dp"
                 android:textColor="@color/white_FFFFFFFF"
                 android:layout_height="wrap_content"/>
@@ -132,7 +132,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Icon width/height"
+                android:text="@string/qr_icon_size"
                 android:id="@+id/harvestingWidthHeightLabel"
                 android:layout_gravity="center"
 
@@ -155,7 +155,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Icon text gap"
+                android:text="@string/qr_icon_text_gap"
                 android:id="@+id/harvestingIconTextGapLabel"
                 android:layout_gravity="center"
 
@@ -177,7 +177,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Icon text size"
+                android:text="@string/qr_icon_text_size"
                 android:id="@+id/harvestingIconTextSizeLabel"
                 android:layout_gravity="center"
 
@@ -200,7 +200,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Mobs Settings"
+                android:text="@string/qr_mobs_settings"
                 android:textSize="17dp"
                 android:textColor="@color/white_FFFFFFFF"
                 android:layout_height="wrap_content"/>
@@ -209,7 +209,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Icon width/height"
+                android:text="@string/qr_icon_size"
                 android:id="@+id/mobIconWidthHeightLabel"
                 android:layout_gravity="center"
 
@@ -230,7 +230,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Circle size"
+                android:text="@string/qr_circle_size"
                 android:id="@+id/mobRadarSizeLabel"
                 android:layout_gravity="center"
 
@@ -250,7 +250,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text=" Text gap"
+                android:text="@string/qr_space_text_gap"
                 android:id="@+id/mobTextGapLabel"
                 android:layout_gravity="center"
 
@@ -272,7 +272,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text=" text size"
+                android:text="@string/qr_space_text_size"
                 android:id="@+id/mobTextSizeLabel"
                 android:layout_gravity="center"
 
@@ -292,7 +292,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Chest Settings"
+                android:text="@string/qr_chest_settings"
                 android:textSize="17dp"
                 android:textColor="@color/white_FFFFFFFF"
                 android:layout_height="wrap_content"/>
@@ -300,7 +300,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Icon width/height"
+                android:text="@string/qr_icon_size"
                 android:id="@+id/chestIconWidthHeightLabel"
                 android:layout_gravity="center"
 
@@ -320,15 +320,28 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Global Settings"
+                android:text="@string/qr_global_settings"
                 android:textSize="17dp"
                 android:textColor="@color/white_FFFFFFFF"
                 android:layout_height="wrap_content"/>
 
+            <TextView
+                android:id="@+id/qrLanguageRow"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:layout_marginBottom="6dp"
+                android:background="@color/dashboard"
+                android:gravity="center"
+                android:padding="10dp"
+                android:text="@string/qr_language_row"
+                android:textColor="@color/white_FFFFFFFF"
+                android:textSize="16dp" />
+
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Radar scale "
+                android:text="@string/qr_radar_scale"
                 android:id="@+id/radarScaleLabel"
                 android:layout_gravity="center"
 
@@ -353,7 +366,7 @@
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
 
-                android:text="Radar Size width/height  "
+                android:text="@string/qr_radar_size"
                 android:textColor="@color/white_FFFFFFFF" />
 
             <SeekBar
@@ -375,7 +388,7 @@
                 android:layout_height="wrap_content"
                 android:layout_gravity="center"
 
-                android:text="Middle circle size "
+                android:text="@string/qr_middle_circle_size"
                 android:textColor="@color/white_FFFFFFFF" />
 
             <SeekBar
@@ -395,7 +408,7 @@
 
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show middle circle topmost"
+                android:text="@string/qr_middle_circle_top"
 
                 android:layout_gravity="center"
                 android:textColor="@color/white_FFFFFFFF"
@@ -418,7 +431,7 @@
 
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show Square"
+                android:text="@string/qr_show_square"
 
                 android:layout_gravity="center"
                 android:textColor="@color/white_FFFFFFFF"
@@ -442,7 +455,7 @@
                 android:id="@+id/textView"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Show Circle"
+                android:text="@string/qr_show_circle"
 
                 android:layout_gravity="center"
                 android:textColor="@color/white_FFFFFFFF"
@@ -465,7 +478,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Cricle/Square  border size "
+                android:text="@string/qr_shape_border"
                 android:id="@+id/radarCircleSquareBorderLabel"
                 android:layout_gravity="center"
 
@@ -486,7 +499,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="radar X "
+                android:text="@string/qr_radar_x"
                 android:id="@+id/radarXLabel"
                 android:layout_gravity="center"
 
@@ -509,7 +522,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="radar Y"
+                android:text="@string/qr_radar_y"
                 android:id="@+id/radarYLabel"
                 android:layout_gravity="center"
 
@@ -531,7 +544,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Settings width"
+                android:text="@string/qr_settings_width"
                 android:id="@+id/settingsWidthLabel"
                 android:layout_gravity="center"
 
@@ -553,7 +566,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Settings height "
+                android:text="@string/qr_settings_height"
                 android:id="@+id/settingsHeightLabel"
                 android:layout_gravity="center"
 
@@ -575,7 +588,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Floating width/height "
+                android:text="@string/qr_floating_size"
                 android:id="@+id/floatingWidthHeightLabel"
                 android:layout_gravity="center"
 
@@ -598,7 +611,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Floating x :"
+                android:text="@string/qr_floating_x_label"
                 android:id="@+id/floatingXLabel"
                 android:layout_gravity="center"
 
@@ -620,7 +633,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Floating y :"
+                android:text="@string/qr_floating_y_label"
                 android:id="@+id/floatingYLabel"
                 android:layout_gravity="center"
 
@@ -641,7 +654,7 @@
 
             <TextView
                 android:layout_width="wrap_content"
-                android:text="Settings transparency :"
+                android:text="@string/qr_settings_transparency_label"
                 android:id="@+id/settingsTransparencyLabel"
                 android:layout_gravity="center"
 

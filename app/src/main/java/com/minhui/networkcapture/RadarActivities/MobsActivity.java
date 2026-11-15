@@ -56,7 +56,7 @@ public class MobsActivity extends AppCompatActivity
         getWindow().setStatusBarColor(ContextCompat.getColor(this, R.color.toolbar));
         @SuppressLint("CommitPrefEdits") SharedPreferences.Editor editor = sharedPreferences.edit();
         textView = findViewById(R.id.toolbarTitle);
-        textView.setText("Mobs Settings");
+        textView.setText(getString(R.string.qr_mobs_settings));
 
         toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);

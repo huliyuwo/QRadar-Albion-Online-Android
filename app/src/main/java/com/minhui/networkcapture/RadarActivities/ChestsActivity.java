@@ -42,7 +42,7 @@ public class ChestsActivity extends AppCompatActivity
         setContentView(R.layout.activity_chests);
 
         textView = findViewById(R.id.toolbarTitle);
-        textView.setText("Chests Settings");
+        textView.setText(getString(R.string.qr_chests_settings));
 
         toolbar = findViewById(R.id.toolbar);
         setSupportActionBar(toolbar);

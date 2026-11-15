@@ -166,7 +166,7 @@ public class LoginActivity extends AppCompatActivity
 
                     if(myResponse==null)
                     {
-                        errorTextView.setText("request error click again ");
+                        errorTextView.setText(getString(R.string.qr_login_request_error));
                         return;
                     }
 
@@ -196,7 +196,7 @@ public class LoginActivity extends AppCompatActivity
                             int temp = (int) (currentTimeStamp -loginInfo.logindate);
                             temp = 30 - temp;
 
-                            errorTextView.setText("Login time out wait :" + temp +"s" );
+                            errorTextView.setText(getString(R.string.qr_login_timeout) + temp +"s" );
                         }
                     });
                 }
@@ -204,7 +204,7 @@ public class LoginActivity extends AppCompatActivity
                 @Override public void onFailure(String errorMessage)
                 {
                     // Handle the failure/error
-                    errorTextView.setText("Login error invalid username or password");
+                    errorTextView.setText(getString(R.string.qr_login_error));
                     //  System.out.println("Error: " + errorMessage);
                 }
             };
