@@ -15,8 +15,6 @@ allprojects {
     repositories {
         google()
         mavenCentral()
-        // 如果 com.tencent.bugly 在 mavenCentral 解析不到，保留下面这行
-        maven { url 'https://jitpack.io' }
     }
 }
 

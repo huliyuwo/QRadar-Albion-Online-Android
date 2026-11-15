@@ -21,6 +21,7 @@ import com.minhui.vpn.nat.NatSession;
 import com.minhui.vpn.nat.NatSessionManager;
 import com.minhui.vpn.processparse.PortHostService;
 import com.minhui.vpn.proxy.TcpProxyServer;
+import com.minhui.vpn.proxy.UpstreamProxyConfig;
 import com.minhui.vpn.tcpip.IPHeader;
 import com.minhui.vpn.tcpip.TCPHeader;
 import com.minhui.vpn.tcpip.UDPHeader;
@@ -96,6 +97,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
     {
         DebugLog.i("VPNService(%s) created.\n", ID);
         sp = getSharedPreferences(VPN_SP_NAME, Context.MODE_PRIVATE);
+        UpstreamProxyConfig.load(this);
         VpnServiceHelper.onVpnServiceCreated(this);
         mVPNThread = new Thread(this, "VPNServiceThread");
         mVPNThread.start();

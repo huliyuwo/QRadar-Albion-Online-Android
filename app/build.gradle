@@ -64,16 +64,11 @@ android {
 }
 
 dependencies {
+    // 对齐 kotlin-stdlib 各子包版本，避免 1.8.0 与传递依赖带入的 jdk7/jdk8 1.6.0 重复类冲突
+    implementation platform('org.jetbrains.kotlin:kotlin-bom:1.8.0')
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.9.0'
     implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
-    // 如果 bugly 在 mavenCentral 找不到，确保顶层 build.gradle 加了 jitpack
-    implementation 'com.tencent.bugly:crashreport:latest.release'
-    implementation 'com.squareup.okhttp3:okhttp:4.11.0'
-    // 修复：补齐 app 实际引用但未声明的依赖
     implementation project(':vpnadaptercore')
-    implementation 'com.google.code.gson:gson:2.9.0'
     implementation 'org.greenrobot:eventbus:3.3.1'
-    implementation 'org.jsoup:jsoup:1.17.2'
-    implementation 'com.squareup.okhttp:okhttp:2.7.5'
 }

@@ -1,5 +1,6 @@
 package com.minhui.networkcapture.Fragments;
 
+import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.preference.PreferenceManager;
@@ -8,6 +9,7 @@ import android.widget.Button;
 import android.widget.CheckBox;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatDelegate;
 import androidx.core.os.LocaleListCompat;
@@ -16,7 +18,11 @@ import com.minhui.networkcapture.R;
 import com.minhui.networkcapture.RadarDrawView;
 import com.minhui.networkcapture.RadarView.RadarSettings;
 import com.minhui.networkcapture.RadarView.RadarView;
+import com.minhui.networkcapture.Utils.MihomoApiClient;
 import com.minhui.vpn.Handlers.MainHandler;
+import com.minhui.vpn.proxy.UpstreamProxyConfig;
+
+import androidx.appcompat.widget.SwitchCompat;
 
 public class SettingsFragment extends Fragment
 {
@@ -45,6 +51,100 @@ public class SettingsFragment extends Fragment
         resetRadar = view.findViewById(R.id.resetRadar);
 
         resetRadar.setOnClickListener(view1 -> MainHandler.getInstance().clearAll());
+
+        SwitchCompat upstreamProxySwitch = view.findViewById(R.id.upstreamProxySwitch);
+        UpstreamProxyConfig.load(view.getContext());
+        upstreamProxySwitch.setChecked(UpstreamProxyConfig.isEnabled());
+        upstreamProxySwitch.setOnCheckedChangeListener((buttonView, isChecked) ->
+                UpstreamProxyConfig.save(view.getContext(), isChecked,
+                        UpstreamProxyConfig.getHost(), UpstreamProxyConfig.getPort()));
+
+        TextView currentNodeText = view.findViewById(R.id.tvCurrentNode);
+        Button refreshSubscription = view.findViewById(R.id.btnRefreshSubscription);
+        Button switchNode = view.findViewById(R.id.btnSwitchNode);
+        Context appContext = view.getContext().getApplicationContext();
+
+        refreshSubscription.setOnClickListener(v ->
+        {
+            refreshSubscription.setEnabled(false);
+
+            MihomoApiClient.refreshAllProviders(new MihomoApiClient.Callback<Integer>()
+            {
+                @Override
+                public void onSuccess(Integer count)
+                {
+                    refreshSubscription.setEnabled(true);
+                    Toast.makeText(appContext, appContext.getString(R.string.qr_subscription_updated, count), Toast.LENGTH_SHORT).show();
+                }
+
+                @Override
+                public void onError(String message)
+                {
+                    refreshSubscription.setEnabled(true);
+                    Toast.makeText(appContext, appContext.getString(R.string.qr_api_error, message), Toast.LENGTH_LONG).show();
+                }
+            });
+        });
+
+        switchNode.setOnClickListener(v -> MihomoApiClient.fetchSelectorGroup(new MihomoApiClient.Callback<MihomoApiClient.NodeGroup>()
+        {
+            @Override
+            public void onSuccess(MihomoApiClient.NodeGroup group)
+            {
+                String[] items = group.all.toArray(new String[0]);
+                int checked = group.all.indexOf(group.now);
+
+                new AlertDialog.Builder(v.getContext())
+                        .setTitle(R.string.qr_select_node)
+                        .setSingleChoiceItems(items, checked, (dialog, which) ->
+                        {
+                            dialog.dismiss();
+
+                            String chosen = items[which];
+                            switchNode.setEnabled(false);
+
+                            MihomoApiClient.selectNode(group.groupName, chosen, new MihomoApiClient.Callback<String>()
+                            {
+                                @Override
+                                public void onSuccess(String nodeName)
+                                {
+                                    switchNode.setEnabled(true);
+                                    currentNodeText.setText(appContext.getString(R.string.qr_current_node, nodeName));
+                                    Toast.makeText(appContext, appContext.getString(R.string.qr_node_switched, nodeName), Toast.LENGTH_SHORT).show();
+                                }
+
+                                @Override
+                                public void onError(String message)
+                                {
+                                    switchNode.setEnabled(true);
+                                    Toast.makeText(appContext, appContext.getString(R.string.qr_api_error, message), Toast.LENGTH_LONG).show();
+                                }
+                            });
+                        })
+                        .show();
+            }
+
+            @Override
+            public void onError(String message)
+            {
+                Toast.makeText(appContext, appContext.getString(R.string.qr_api_error, message), Toast.LENGTH_LONG).show();
+            }
+        }));
+
+        MihomoApiClient.fetchSelectorGroup(new MihomoApiClient.Callback<MihomoApiClient.NodeGroup>()
+        {
+            @Override
+            public void onSuccess(MihomoApiClient.NodeGroup group)
+            {
+                currentNodeText.setText(appContext.getString(R.string.qr_current_node, group.now));
+            }
+
+            @Override
+            public void onError(String message)
+            {
+                currentNodeText.setText(R.string.qr_current_node_unknown);
+            }
+        });
 
         TextView languageRow = view.findViewById(R.id.qrLanguageRow);
         if (languageRow != null)

@@ -2,6 +2,7 @@ package com.minhui.vpn.tunnel;
 
 import com.minhui.vpn.nat.NatSession;
 import com.minhui.vpn.nat.NatSessionManager;
+import com.minhui.vpn.proxy.UpstreamProxyConfig;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
@@ -28,6 +29,11 @@ public class TunnelFactory {
 
 	public static TcpTunnel createTunnelByConfig(InetSocketAddress destAddress, Selector selector, short portKey) throws IOException
 	{
+		if (UpstreamProxyConfig.isEnabled())
+		{
+			return new Socks5TcpTunnel(UpstreamProxyConfig.endpoint(), selector, portKey);
+		}
+
 		return new RemoteTcpTunnel(destAddress, selector,portKey);
 	}
 }

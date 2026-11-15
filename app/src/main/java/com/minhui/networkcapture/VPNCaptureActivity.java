@@ -28,7 +28,6 @@ import android.os.Handler;
 import android.provider.Settings;
 import android.view.View;
 import android.widget.ImageView;
-import android.widget.TextView;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
@@ -41,7 +40,6 @@ import androidx.fragment.app.FragmentPagerAdapter;
 import androidx.viewpager.widget.ViewPager;
 
 import com.google.android.material.tabs.TabLayout;
-import com.google.gson.Gson;
 import com.minhui.networkcapture.Fragments.MainFragment;
 import com.minhui.networkcapture.RadarView.RadarSettings;
 import com.minhui.vpn.ProxyConfig;
@@ -105,8 +103,6 @@ public class VPNCaptureActivity extends FragmentActivity
         }
     }
 
-    TextView days;
-
     ActivityResultLauncher<Intent> overlayPermissionResultLauncher = registerForActivityResult(
             new ActivityResultContracts.StartActivityForResult(),
             result ->
@@ -128,83 +124,6 @@ public class VPNCaptureActivity extends FragmentActivity
 
         mContext = this;
 
-        /*
-        String value = getIntent().getStringExtra("logged");
-        float daysAmount = getIntent().getFloatExtra("days",0);
-        days = findViewById(R.id.days);
-
-        if(!value.equals("true"))
-        {
-            Intent intent = new Intent(VPNCaptureActivity.this, LoginActivity.class);
-            startActivity(intent);
-        }
-
-        if(daysAmount<=0)
-        {
-            Intent intent = new Intent(VPNCaptureActivity.this, LoginActivity.class);
-            startActivity(intent);
-        }
-
-        DecimalFormat decimalFormat = new DecimalFormat("#.0");
-        String formattedNumber = decimalFormat.format(daysAmount);
-
-        days.setText(getString(R.string.qr_days_left_label) + formattedNumber);
-
-        String login = getIntent().getStringExtra("login");
-        String password = getIntent().getStringExtra("password");
-        Thread t1   = new Thread(() ->{
-
-        while (execution)
-        {
-            String apiKey = "7psdgdsg3241124123tgcxvczSFD124412D5adfJEBACCHINY44f3265taaFDdgs36ft3546t346XDD5t4128n0HWuTbxz777vfddsgMkDXgdsw3gdsg214erqw";
-
-            LoginDataJSON loginDataJSON = new LoginDataJSON();
-
-            loginDataJSON.name  = login;
-            loginDataJSON.password = password;
-            String loginJSON = gson.toJson(loginDataJSON);
-
-            HttpTask.Callback callback = new HttpTask.Callback()
-            {
-                @RequiresApi(api = Build.VERSION_CODES.O)
-                @Override
-                public void onSuccess(String response)
-                {
-
-                }
-
-                @Override
-                public void onFailure(String errorMessage)
-                {
-                    runOnUiThread(new Runnable()
-                    {
-                        @Override
-                        public void run()
-                        {
-                            Intent intent = new Intent(VPNCaptureActivity.this, LoginActivity.class);
-                            startActivity(intent);
-                        }
-                    });
-                    execution = false;
-                }
-            };
-
-            HttpTask postTask = new HttpTask(apiKey, callback);
-            postTask.sendPostRequest(Api.updateUserLoginDate, loginJSON , "PUT");
-
-            try
-            {
-                Thread.sleep( 20000);
-            }
-            catch (InterruptedException e)
-            {
-                e.printStackTrace();
-            }
-        }
-        });
-
-        t1.start();
-        */
 
         getWindow().setStatusBarColor(ContextCompat.getColor(this, R.color.toolbar));
         vpnButton = (ImageView) findViewById(R.id.vpn);

@@ -21,6 +21,51 @@
             android:layout_height="wrap_content">
 
 
+            <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/upstreamProxySwitch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="5dp"
+                android:padding="8dp"
+                android:text="@string/qr_upstream_proxy"
+                android:textSize="15dp" />
+
+            <TextView
+                android:id="@+id/tvCurrentNode"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="5dp"
+                android:gravity="center"
+                android:text="@string/qr_current_node_unknown"
+                android:textColor="@color/white_FFFFFFFF"
+                android:textSize="14dp" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="5dp"
+                android:orientation="horizontal">
+
+                <Button
+                    android:id="@+id/btnRefreshSubscription"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:background="@color/dashboard"
+                    android:text="@string/qr_refresh_subscription"
+                    android:textColor="@color/white_FFFFFFFF" />
+
+                <Button
+                    android:id="@+id/btnSwitchNode"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="8dp"
+                    android:layout_weight="1"
+                    android:background="@color/dashboard"
+                    android:text="@string/qr_switch_node"
+                    android:textColor="@color/white_FFFFFFFF" />
+            </LinearLayout>
+
             <Button
                 android:layout_width="wrap_content"
                 android:gravity="center"

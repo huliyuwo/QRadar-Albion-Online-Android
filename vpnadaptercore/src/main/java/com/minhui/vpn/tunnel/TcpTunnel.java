@@ -52,6 +52,11 @@ public abstract class TcpTunnel implements KeyHandler
         sessionCount++;
     }
 
+    protected SocketChannel innerChannel()
+    {
+        return mInnerChannel;
+    }
+
     @Override
     public void onKeyReady(SelectionKey key)
     {

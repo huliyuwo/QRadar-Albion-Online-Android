@@ -8,6 +8,8 @@ import com.minhui.vpn.KeyHandler;
 import com.minhui.vpn.Packet;
 import com.minhui.vpn.PhotonPackageParser.PhotonPacketThreading;
 import com.minhui.vpn.UDPServer;
+import com.minhui.vpn.proxy.Socks5Client;
+import com.minhui.vpn.proxy.UpstreamProxyConfig;
 import com.minhui.vpn.VPNConstants;
 import com.minhui.vpn.VPNLog;
 import com.minhui.vpn.nat.NatSession;
@@ -22,6 +24,7 @@ import com.minhui.vpn.utils.VpnServiceHelper;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.channels.DatagramChannel;
 import java.nio.channels.SelectionKey;
@@ -52,6 +55,10 @@ public class UDPTunnel implements KeyHandler
     String ipAndPort;
     private final NatSession session;
     private final Handler handler;
+    private Socket upstreamControlSocket;
+    private boolean viaUpstream;
+    private InetAddress originalDest;
+    private int originalDestPort;
 
     public UDPTunnel(VpnService vpnService, Selector selector, UDPServer vpnServer, Packet packet, Queue<Packet> outputQueue, short portKey)
     {
@@ -64,6 +71,8 @@ public class UDPTunnel implements KeyHandler
         this.portKey = portKey;
         this.session = NatSessionManager.getSession(portKey);
         this.handler = new Handler(Looper.getMainLooper());
+        this.originalDest = packet.ip4Header.destinationAddress;
+        this.originalDestPort = packet.udpHeader.destinationPort;
 
         if (VpnServiceHelper.isUDPDataNeedSave())
         {
@@ -103,7 +112,28 @@ public class UDPTunnel implements KeyHandler
 
         try
         {
-            readBytes = channel.read(receiveBuffer);
+            if (viaUpstream)
+            {
+                ByteBuffer frame = SocketUtils.getByteBuffer();
+                frame.clear();
+                int frameBytes = channel.read(frame);
+
+                if (frameBytes > 0)
+                {
+                    int payloadOffset = Socks5Client.udpFramePayloadOffset(frame.array(), frameBytes);
+                    int payloadLength = Math.min(frameBytes - payloadOffset, receiveBuffer.remaining());
+                    receiveBuffer.put(frame.array(), payloadOffset, payloadLength);
+                    readBytes = payloadLength;
+                }
+                else
+                {
+                    readBytes = frameBytes;
+                }
+            }
+            else
+            {
+                readBytes = channel.read(receiveBuffer);
+            }
         }
         catch (Exception e)
         {
@@ -225,9 +255,21 @@ public class UDPTunnel implements KeyHandler
 
             }
 
-            while (payloadBuffer.hasRemaining())
+            if (viaUpstream)
             {
-                channel.write(payloadBuffer);
+                ByteBuffer frame = Socks5Client.wrapUdpFrame(originalDest, originalDestPort, payloadBuffer);
+
+                while (frame.hasRemaining())
+                {
+                    channel.write(frame);
+                }
+            }
+            else
+            {
+                while (payloadBuffer.hasRemaining())
+                {
+                    channel.write(payloadBuffer);
+                }
             }
         }
         catch (IOException e)
@@ -245,10 +287,35 @@ public class UDPTunnel implements KeyHandler
 
         try
         {
+            InetAddress channelDest;
+            int channelDestPort;
+
+            if (UpstreamProxyConfig.isEnabled())
+            {
+                Socket control = new Socket();
+                upstreamControlSocket = control;
+                vpnService.protect(control);
+                control.connect(UpstreamProxyConfig.endpoint(), 5000);
+                control.setSoTimeout(5000);
+                Socks5Client.handshake(control);
+                InetSocketAddress relay = Socks5Client.udpAssociate(control);
+                InetAddress relayAddress = relay.getAddress().isAnyLocalAddress()
+                        ? InetAddress.getByName(UpstreamProxyConfig.getHost())
+                        : relay.getAddress();
+                viaUpstream = true;
+                channelDest = relayAddress;
+                channelDestPort = relay.getPort();
+            }
+            else
+            {
+                channelDest = destinationAddress;
+                channelDestPort = destinationPort;
+            }
+
             channel = DatagramChannel.open();
             vpnService.protect(channel.socket());
             channel.configureBlocking(false);
-            channel.connect(new InetSocketAddress(destinationAddress, destinationPort));
+            channel.connect(new InetSocketAddress(channelDest, channelDestPort));
             selector.wakeup();
             selectionKey = channel.register(selector,
                     SelectionKey.OP_READ, this);
@@ -256,6 +323,7 @@ public class UDPTunnel implements KeyHandler
         catch (IOException e)
         {
             SocketUtils.closeResources(channel);
+            closeUpstreamControl();
             return;
         }
 
@@ -298,6 +366,25 @@ public class UDPTunnel implements KeyHandler
             }), 1000);
         } catch (Exception e) {
             VPNLog.w(TAG, "error to close UDP channel IpAndPort" + ipAndPort + ",error is " + e.getMessage());
+        }
+
+        closeUpstreamControl();
+    }
+
+    private void closeUpstreamControl()
+    {
+        if (upstreamControlSocket != null)
+        {
+            try
+            {
+                upstreamControlSocket.close();
+            }
+            catch (Exception e)
+            {
+                VPNLog.d(TAG, "failed to close upstream control socket: " + e.getMessage());
+            }
+
+            upstreamControlSocket = null;
         }
     }
 

@@ -3,7 +3,6 @@
     <string name="qr_space_text_gap"> 文字间距</string>
     <string name="qr_space_text_size"> 文字大小</string>
     <string name="qr_app_title">Albion QRadar</string>
-    <string name="qr_app_short">QRadar</string>
     <string name="qr_blue">蓝色</string>
     <string name="qr_blue_">蓝色 </string>
     <string name="qr_boss_no_filter">Boss（不过滤）</string>
@@ -28,13 +27,11 @@
     <string name="qr_harvest">采集</string>
     <string name="qr_harvestable">可采集</string>
     <string name="qr_harvesting_settings">采集设置</string>
-    <string name="qr_hello">Hello World!</string>
     <string name="qr_hide">兽皮 </string>
     <string name="qr_icon_text_gap">图标文字间距</string>
     <string name="qr_icon_text_size">图标文字大小</string>
     <string name="qr_icon_size">图标宽高</string>
     <string name="qr_legendary">传说</string>
-    <string name="qr_login">登录</string>
     <string name="qr_middle_circle_size">中心圆大小</string>
     <string name="qr_mobs">怪物</string>
     <string name="qr_mobs_settings">怪物设置</string>
@@ -42,7 +39,6 @@
     <string name="qr_other">其他 </string>
     <string name="qr_other_no_filter">其他（不过滤）</string>
     <string name="qr_pvp">PVP</string>
-    <string name="qr_password">密码</string>
     <string name="qr_play_sound">播放声音</string>
     <string name="qr_purple">紫色</string>
     <string name="qr_pvp_settings">PVP 设置</string>
@@ -51,7 +47,6 @@
     <string name="qr_radar_scale">雷达距离缩放</string>
     <string name="qr_rest">其余 </string>
     <string name="qr_rock">岩石 </string>
-    <string name="qr_save_password">保存密码</string>
     <string name="qr_settings">设置</string>
     <string name="qr_settings_height">设置面板高度</string>
     <string name="qr_settings_transparency_label">设置面板透明度：</string>
@@ -73,12 +68,9 @@
     <string name="qr_tier">阶级 </string>
     <string name="qr_title">标题</string>
     <string name="qr_type">类型 </string>
-    <string name="qr_username">用户名</string>
-    <string name="qr_visit_example">访问示例</string>
     <string name="qr_wood">木材 </string>
     <string name="qr_radar_x">雷达 X </string>
     <string name="qr_radar_y">雷达 Y</string>
-    <string name="qr_days_left_label">剩余天数：</string>
     <string name="qr_pvp_circle_size">PVP 圆形大小：</string>
     <string name="qr_pvp_circle_gap">PVP 圆形间距：</string>
     <string name="qr_pvp_text_gap">PVP 文字间距：</string>
@@ -103,13 +95,19 @@
     <string name="qr_settings_height_label">设置面板高度：</string>
     <string name="qr_floating_icon_size">悬浮窗图标大小：</string>
     <string name="qr_chests_settings">箱子设置</string>
-    <string name="qr_login_request_error">请求失败，请再点一次</string>
-    <string name="qr_login_timeout">登录超时，等待：</string>
-    <string name="qr_login_error">登录失败：用户名或密码错误</string>
     <string name="qr_language">语言</string>
     <string name="qr_language_row">语言 / Language</string>
     <string name="qr_follow_system">跟随系统</string>
     <string name="qr_chinese">中文</string>
     <string name="qr_english">English</string>
     <string name="qr_harvest_card">采集</string>
+    <string name="qr_upstream_proxy">上游代理（SOCKS5，如 Termux mihomo 127.0.0.1:7897）</string>
+    <string name="qr_refresh_subscription">立即刷新订阅</string>
+    <string name="qr_switch_node">切换代理节点</string>
+    <string name="qr_select_node">选择节点</string>
+    <string name="qr_current_node">当前节点：%1$s</string>
+    <string name="qr_current_node_unknown">当前节点：未知</string>
+    <string name="qr_subscription_updated">订阅已更新（%1$d 个 provider）</string>
+    <string name="qr_node_switched">已切换到 %1$s</string>
+    <string name="qr_api_error">mihomo 接口错误：%1$s</string>
 </resources>
