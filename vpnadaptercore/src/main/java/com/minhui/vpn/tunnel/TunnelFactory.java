@@ -29,7 +29,7 @@ public class TunnelFactory {
 
 	public static TcpTunnel createTunnelByConfig(InetSocketAddress destAddress, Selector selector, short portKey) throws IOException
 	{
-		if (UpstreamProxyConfig.isEnabled())
+		if (UpstreamProxyConfig.isEnabled() && !UpstreamProxyConfig.isDirectEndpoint(destAddress))
 		{
 			return new Socks5TcpTunnel(UpstreamProxyConfig.endpoint(), selector, portKey);
 		}

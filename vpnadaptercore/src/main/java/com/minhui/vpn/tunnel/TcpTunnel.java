@@ -2,6 +2,7 @@ package com.minhui.vpn.tunnel;
 
 
 import com.minhui.vpn.KeyHandler;
+import com.minhui.vpn.VPNLog;
 import com.minhui.vpn.nat.NatSession;
 import com.minhui.vpn.nat.NatSessionManager;
 import com.minhui.vpn.service.FirewallVpnService;
@@ -10,6 +11,7 @@ import com.minhui.vpn.utils.DebugLog;
 import com.minhui.vpn.utils.VpnServiceHelper;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
@@ -24,6 +26,55 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public abstract class TcpTunnel implements KeyHandler
 {
     public static long sessionCount;
+
+    /** 所有存活隧道的登记表：切换代理开关时用来强制断开，让新出口立刻生效。 */
+    private static final java.util.Set<TcpTunnel> ALL_TUNNELS =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    public static void closeAll()
+    {
+        for (TcpTunnel tunnel : ALL_TUNNELS)
+        {
+            try
+            {
+                tunnel.dispose();
+            }
+            catch (Exception ignored)
+            {
+            }
+        }
+    }
+
+    /** 关闭所有发往该地址的隧道（一致性回退：UDP 判定必须直连时，TCP 也一起切直连）。 */
+    public static int closeAllTo(InetAddress address)
+    {
+        if (address == null)
+        {
+            return 0;
+        }
+
+        int closed = 0;
+
+        for (TcpTunnel tunnel : ALL_TUNNELS)
+        {
+            InetSocketAddress dest = tunnel.mDestAddress;
+
+            if (dest != null && address.equals(dest.getAddress()))
+            {
+                try
+                {
+                    tunnel.dispose();
+                    closed++;
+                }
+                catch (Exception ignored)
+                {
+                }
+            }
+        }
+
+        return closed;
+    }
+
     protected InetSocketAddress mDestAddress;
     private SocketChannel mInnerChannel;
     private Selector mSelector;
@@ -39,17 +90,21 @@ public abstract class TcpTunnel implements KeyHandler
         mInnerChannel = innerChannel;
         mSelector = selector;
         sessionCount++;
+        ALL_TUNNELS.add(this);
     }
 
     public TcpTunnel(InetSocketAddress serverAddress, Selector selector, short portKey) throws IOException
     {
         SocketChannel innerChannel = SocketChannel.open();
         innerChannel.configureBlocking(false);
+        // 转发的是交互式小包（TLS 记录、控制消息），Nagle 只会叠加延迟
+        innerChannel.socket().setTcpNoDelay(true);
         this.mInnerChannel = innerChannel;
         this.mSelector = selector;
         this.mServerEP = serverAddress;
         this.portKey = portKey;
         sessionCount++;
+        ALL_TUNNELS.add(this);
     }
 
     protected SocketChannel innerChannel()
@@ -154,6 +209,7 @@ public abstract class TcpTunnel implements KeyHandler
 
             if (bytesRead > 0)
             {
+                VPNLog.d("TcpTunnel", "DIAG read " + getClass().getSimpleName() + " bytes=" + bytesRead);
                 buffer.flip();
                 afterReceived(buffer);
                 sendToBrother(key, buffer);
@@ -231,6 +287,11 @@ public abstract class TcpTunnel implements KeyHandler
             {
                 break;
             }
+        }
+
+        if (byteSendSum > 0)
+        {
+            VPNLog.d("TcpTunnel", "DIAG write " + getClass().getSimpleName() + " bytes=" + byteSendSum);
         }
         return byteSendSum;
     }
@@ -314,6 +375,7 @@ public abstract class TcpTunnel implements KeyHandler
             mBrotherTunnel = null;
             mDisposed = true;
             sessionCount--;
+            ALL_TUNNELS.remove(this);
 
             onDispose();
             NatSessionManager.removeSession(portKey);

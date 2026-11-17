@@ -1,6 +1,7 @@
 package com.minhui.networkcapture.RadarView;
 
 import android.graphics.Bitmap;
+import android.graphics.Paint;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
 import android.graphics.drawable.BitmapDrawable;
@@ -21,6 +22,7 @@ public class DrawChests
     ArrayList<Chest> chestMist;
 
     View view;
+    public int drawnCount;
 
     float[] tempPos = new float[2];
 
@@ -76,17 +78,33 @@ public class DrawChests
             transformationMatrix.mapPoints(tempPos);
 
             Bitmap bitmap = bitmapCache.getBitmapFromMemCache(totalName);
+            drawnCount++;
 
             if (bitmap == null)
             {
                 Log.d("Chest nameBitmap", ""+totalName);
 
                 int resourceId = view.getResources().getIdentifier(totalName, "drawable", view.getContext().getPackageName());
-                Drawable drawable = ContextCompat.getDrawable(view.getContext(), resourceId);
-                BitmapDrawable bitmapDrawable = (BitmapDrawable) drawable;
-                bitmap = bitmapDrawable.getBitmap();
+                Drawable drawable = resourceId == 0 ? null : ContextCompat.getDrawable(view.getContext(), resourceId);
 
-                bitmapCache.addBitmapToMemoryCache(totalName, bitmap);
+                if (drawable instanceof BitmapDrawable)
+                {
+                    bitmap = ((BitmapDrawable) drawable).getBitmap();
+
+                    if (bitmap != null)
+                    {
+                        bitmapCache.addBitmapToMemoryCache(totalName, bitmap);
+                    }
+                }
+            }
+
+            if (bitmap == null)
+            {
+                Paint fallbackPaint = new Paint();
+                fallbackPaint.setColor(0xFFFFB300);
+                fallbackPaint.setAntiAlias(true);
+                canvas.drawCircle(tempPos[0], tempPos[1], desiredWidth * 0.3f, fallbackPaint);
+                continue;
             }
 
             int offsetX = (int) (tempPos[0] - (desiredWidth / 2));

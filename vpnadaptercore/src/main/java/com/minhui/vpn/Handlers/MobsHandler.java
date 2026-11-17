@@ -15,6 +15,33 @@ public class MobsHandler
     private ArrayList<Mob> mobsList;
     private Map<Integer, MobsInfo> mobinfo;
 
+    /** 超过上限时淘汰离玩家最远的怪物。 */
+    public void trimToLimit(float lpX, float lpY, int max)
+    {
+        SharedLocks.mobsHandlerLock.writeLock().lock();
+
+        try
+        {
+            if (mobsList == null || mobsList.size() <= max)
+            {
+                return;
+            }
+
+            java.util.Collections.sort(mobsList, (a, b) -> Double.compare(
+                    com.minhui.vpn.PhotonPackageParser.Utils.calculateDistance(lpX, lpY, a.getPosX(), a.getPosY()),
+                    com.minhui.vpn.PhotonPackageParser.Utils.calculateDistance(lpX, lpY, b.getPosX(), b.getPosY())));
+
+            while (mobsList.size() > max)
+            {
+                mobsList.remove(mobsList.size() - 1);
+            }
+        }
+        finally
+        {
+            SharedLocks.mobsHandlerLock.writeLock().unlock();
+        }
+    }
+
     public void clear()
     {
         SharedLocks.mobsHandlerLock.writeLock().lock();

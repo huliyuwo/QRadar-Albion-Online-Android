@@ -24,23 +24,16 @@ public class NewPlayerEvent
 
     public void NewCharacter(HashMap<Object, Object> Parameters)
     {
+        // 当前协议（1.32）的 NewCharacter 参数：0=ObjectId, 1=名字, 7=Guid, 8=公会, 40=装备, 51=联盟。
+        // 旧代码把 14 当坐标、20/21 当血量，这些字段现在根本不存在，
+        // getFloats(null) 直接抛异常，玩家一个都加不进去（players 恒为 0）。
+        // 坐标由 Move 事件（code 3 的字节数组）随后补上。
         int id = Utils.getNumber(Parameters.get(0));
-        String name = String.valueOf(Parameters.get(1));
-        String guildName =String.valueOf(Parameters.get(8));
+        String name = Utils.getString(Parameters.get(1));
+        String guildName = Utils.getString(Parameters.get(8));
 
-        float[] floatArray = Utils.getFloats(Parameters.get(14));
-        float currentHealth = Utils.getFloat(Parameters.get(20));
-        float maxHealth = Utils.getFloat(Parameters.get(21));
-        float currentEnergy = Utils.getFloat(Parameters.get(25));
-        float maxEnergy = Utils.getFloat(Parameters.get(26));
-        int[] items = Utils.getKnownArray(Parameters.get(38));
-        int[] skills = Utils.getKnownArray(Parameters.get(41));
-        int faction = Utils.getNumber(Parameters.get(51));
-
-        String JsonData = gson.toJson(Parameters);
-        Log.d("onNewCharacter", JsonData);
-
-        MainHandler.getInstance().playersHandler.addPlayer(floatArray[0], floatArray[1], id, name , guildName, currentHealth, maxHealth, currentEnergy, maxEnergy, null );
+        MainHandler.getInstance().playersHandler.addPlayer(0, 0, id, name, guildName,
+                0, 0, 0, 0, null);
     }
 
     public void updatePlayerPosition(int id, float posX , float posY)
@@ -50,36 +43,35 @@ public class NewPlayerEvent
 
     public void updateLocalPlayer(HashMap<Object, Object> parameters)
     {
+        // 当前协议的 Join 响应：0=ObjectId, 2=用户名, 8=地图, 58=公会, 64=入场坐标, 79=联盟。
+        // 旧代码取的 9=坐标 / 11,12=血量 / 16,17=能量 / 43=阵营 / 57=公会 在 1.32 已经不存在，
+        // getFloats(9) 会抛异常，本地玩家一直更新失败（lp 恒为 0）。
         int id = Utils.getNumber(parameters.get(0));
-        int[] markId = Utils.getKnownArray(parameters.get(1));
         String cName = Utils.getString(parameters.get(2));
         String cluster = Utils.getString(parameters.get(8));
-        float[] pos = Utils.getFloats(parameters.get(9));
+        String guildName = Utils.getString(parameters.get(58));
 
-        float angle = 0;
+        float[] pos = safeFloats(parameters.get(64));
+        float posX = pos != null ? pos[0] : 0;
+        float posY = pos != null ? pos[1] : 0;
 
-        if (parameters.containsKey(10))
+        MainHandler.getInstance().playersHandler.updateLocalPlayer(id, null, cName, guildName,
+                cluster, posX, posY, 0, 0, 0, 0, 0, 0);
+    }
+
+    /** 安全取 float[2]：字段缺失或类型不对时返回 null，不再让整个 Join 处理失败。 */
+    private static float[] safeFloats(Object value)
+    {
+        try
         {
-            angle = Utils.getFloat(parameters.get(10));
+            float[] result = Utils.getFloats(value);
+
+            return result != null && result.length >= 2 ? result : null;
         }
-        else
+        catch (Exception e)
         {
-            angle = Utils.getFloat(parameters.get(14));
+            return null;
         }
-
-        float currentHealth = Utils.getFloat(parameters.get(11));
-        float maxHealth = Utils.getFloat(parameters.get(12));
-        float currentEnergy = Utils.getFloat(parameters.get(16));
-        float maxEnergy = Utils.getFloat(parameters.get(17));
-
-        int faction = Utils.getNumber(parameters.get(43));
-        String guildName = Utils.getString(parameters.get(57));
-        String title = Utils.getString(parameters.get(77));
-
-        MainHandler.getInstance().playersHandler.updateLocalPlayer(id, markId, cName, guildName, cluster, pos[0], pos[1], angle, currentHealth, maxHealth, currentEnergy, maxEnergy, faction);
-
-        String JsonData = gson.toJson(parameters);
-        Log.d("onUpdateLocalPlayer", JsonData);
     }
 
     public void Mounted(HashMap<Object, Object> parameters)

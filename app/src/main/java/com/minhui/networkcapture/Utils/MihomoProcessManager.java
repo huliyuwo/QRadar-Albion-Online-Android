@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 
 import com.minhui.vpn.VPNConstants;
+import com.minhui.vpn.proxy.UpstreamProxyConfig;
 import com.minhui.vpn.utils.DebugLog;
 
 import java.io.BufferedReader;
@@ -13,8 +14,14 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.lang.reflect.Field;
+import java.net.InetAddress;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 内置 mihomo 子进程管理器（路线一）。
@@ -49,6 +56,7 @@ public class MihomoProcessManager
     private static final long STABLE_UPTIME_MS = 60_000L;
     private static final long INITIAL_BACKOFF_MS = 1_000L;
     private static final long MAX_BACKOFF_MS = 30_000L;
+    private static final int MAX_FAST_FAILS = 5;
 
     private static volatile MihomoProcessManager instance;
 
@@ -57,6 +65,7 @@ public class MihomoProcessManager
     private Thread monitorThread;
     private volatile boolean stopRequested = true;
     private long backoffMs = INITIAL_BACKOFF_MS;
+    private int fastFails = 0;
 
     private MihomoProcessManager()
     {
@@ -80,6 +89,13 @@ public class MihomoProcessManager
     public void init(Context context)
     {
         appContext = context.getApplicationContext();
+
+        // 上次是"代理开"状态时，App 重启后要把 mihomo 自动拉起来，
+        // 否则开关还是开、7897 却没人监听，所有 TCP 都连不上。
+        if (preferences().getBoolean(UpstreamProxyConfig.KEY_ENABLED, false) && isConfigured())
+        {
+            startAsync();
+        }
     }
 
     // ---------- 订阅链接 ----------
@@ -169,10 +185,10 @@ public class MihomoProcessManager
             Process started = builder.start();
             process = started;
             writePidFile(configDir, pidOf(started));
-            backoffMs = INITIAL_BACKOFF_MS;
 
             DebugLog.iWithTag(TAG, "mihomo started, pid=%d", pidOf(started));
             startMonitor(started);
+            scheduleDirectEndpointRefresh(configDir);
         }
         catch (IOException e)
         {
@@ -191,6 +207,8 @@ public class MihomoProcessManager
     public synchronized void stop()
     {
         stopRequested = true;
+        backoffMs = INITIAL_BACKOFF_MS;
+        fastFails = 0;
 
         Thread monitor = monitorThread;
         monitorThread = null;
@@ -239,6 +257,134 @@ public class MihomoProcessManager
         t.start();
     }
 
+    // ---------- 直连端点集合 ----------
+
+    private static final Pattern SERVER_PATTERN = Pattern.compile("\\bserver:\\s*\"?([^\",}\\s]+)\"?");
+    private static final Pattern PORT_PATTERN = Pattern.compile("\\bport:\\s*(\\d+)");
+
+    /**
+     * 雷达 UID 在 VPN 白名单内后，mihomo 连节点/拉订阅的出口流量也会被吸入隧道。
+     * 若按代理开关再转回 mihomo 会形成递归环，故把这些目的端点加入强制直连集合。
+     * sub.yaml 由 mihomo 启动后下载，首轮可能尚不存在，做多次延迟刷新。
+     */
+    private void scheduleDirectEndpointRefresh(File configDir)
+    {
+        Thread t = new Thread(() ->
+        {
+            refreshDirectEndpoints(configDir);
+
+            for (long delayMs : new long[]{5_000L, 20_000L})
+            {
+                try
+                {
+                    Thread.sleep(delayMs);
+                }
+                catch (InterruptedException e)
+                {
+                    return;
+                }
+                refreshDirectEndpoints(configDir);
+            }
+
+            while (isRunning())
+            {
+                try
+                {
+                    Thread.sleep(300_000L);
+                }
+                catch (InterruptedException e)
+                {
+                    return;
+                }
+                refreshDirectEndpoints(configDir);
+            }
+        }, "mihomo-direct-endpoints");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void refreshDirectEndpoints(File configDir)
+    {
+        Set<String> endpoints = new HashSet<>();
+
+        // 订阅 URL 端点（mihomo 自己下载订阅用，走 DIRECT 出口）
+        try
+        {
+            URL url = new URL(getSubscriptionUrl());
+            int urlPort = url.getPort() != -1 ? url.getPort() : url.getDefaultPort();
+
+            for (InetAddress addr : InetAddress.getAllByName(url.getHost()))
+            {
+                endpoints.add(addr.getHostAddress() + ":" + urlPort);
+            }
+        }
+        catch (Exception e)
+        {
+            DebugLog.wWithLog(TAG, "%s", "cannot resolve subscription host: " + e.getMessage());
+        }
+
+        // 全部订阅节点端点（含未选中的，切节点后集合依然有效）
+        File subFile = new File(new File(configDir, "proxies"), "sub.yaml");
+        String pendingServer = null;
+        int pendingPort = -1;
+
+        try (BufferedReader reader = new BufferedReader(new FileReader(subFile)))
+        {
+            String line;
+
+            while ((line = reader.readLine()) != null)
+            {
+                if (line.trim().startsWith("- "))
+                {
+                    pendingServer = null;
+                    pendingPort = -1;
+                }
+
+                Matcher ms = SERVER_PATTERN.matcher(line);
+                if (ms.find())
+                {
+                    pendingServer = ms.group(1);
+                }
+
+                Matcher mp = PORT_PATTERN.matcher(line);
+                if (mp.find())
+                {
+                    pendingPort = Integer.parseInt(mp.group(1));
+                }
+
+                if (pendingServer != null && pendingPort > 0)
+                {
+                    addEndpoint(endpoints, pendingServer, pendingPort);
+                    pendingServer = null;
+                    pendingPort = -1;
+                }
+            }
+        }
+        catch (IOException e)
+        {
+            // 首次启动 sub.yaml 还没下载下来，属正常情况
+            DebugLog.iWithTag(TAG, "sub.yaml not readable yet: %s", e.getMessage());
+        }
+
+        UpstreamProxyConfig.replaceDirectEndpoints(endpoints);
+        DebugLog.iWithTag(TAG, "direct endpoints refreshed, count=%d", endpoints.size());
+    }
+
+    private void addEndpoint(Set<String> endpoints, String server, int port)
+    {
+        try
+        {
+            for (InetAddress addr : InetAddress.getAllByName(server))
+            {
+                endpoints.add(addr.getHostAddress() + ":" + port);
+            }
+        }
+        catch (Exception e)
+        {
+            DebugLog.wWithLog(TAG, "cannot resolve node server %s: %s", server, e.getMessage());
+        }
+    }
+
     // ---------- 崩溃拉起 ----------
 
     private void startMonitor(Process watched)
@@ -272,10 +418,31 @@ public class MihomoProcessManager
             if (uptime >= STABLE_UPTIME_MS)
             {
                 backoffMs = INITIAL_BACKOFF_MS; // 稳定运行过，重置退避
+                fastFails = 0;
+            }
+            else if (uptime < 1_000L)
+            {
+                fastFails++;
             }
 
             DebugLog.eWithTag(TAG, "mihomo exited (code=%d, uptime=%dms), restart in %dms",
                     exitCode, uptime, backoffMs);
+
+            // 连续秒退通常是配置错误（如订阅解析失败），无限重启只会空耗电量
+            if (fastFails >= MAX_FAST_FAILS)
+            {
+                DebugLog.eWithTag(TAG, "%s",
+                        "mihomo exited immediately " + MAX_FAST_FAILS + " times in a row, giving up auto-restart (check config/subscription)");
+
+                // 进程起不来时把代理开关置回“关”，否则新连接会一直去连一个不存在的 7897 端口
+                if (appContext != null)
+                {
+                    UpstreamProxyConfig.save(appContext, false,
+                            UpstreamProxyConfig.getHost(), UpstreamProxyConfig.getPort());
+                }
+
+                return;
+            }
 
             try
             {
@@ -353,22 +520,49 @@ public class MihomoProcessManager
                 .replace("\\", "\\\\")
                 .replace("\"", "\\\"");
 
+        String subscriptionHost = "";
+
+        try
+        {
+            String host = java.net.URI.create(getSubscriptionUrl()).getHost();
+            subscriptionHost = host == null ? "" : host;
+        }
+        catch (Exception ignored)
+        {
+        }
+
         String yaml = ""
-                + "socks-port: 127.0.0.1:" + SOCKS_PORT + "\n"
+                + "socks-port: " + SOCKS_PORT + "\n"
                 + "external-controller: 127.0.0.1:" + CONTROLLER_PORT + "\n"
+                + "bind-address: local\n"
                 + "mode: rule\n"
                 + "allow-lan: false\n"
-                + "log-level: warning\n"
+                + "log-level: debug\n"
+                + "\n"
+                // mihomo 自己的 DNS 不能依赖 8.8.8.8（国内被墙，订阅/节点解析会超时）
+                + "dns:\n"
+                + "  enable: true\n"
+                + "  ipv6: false\n"
+                + "  nameserver:\n"
+                + "    - 223.5.5.5\n"
+                + "    - 119.29.29.29\n"
                 + "\n"
                 + "proxy-providers:\n"
                 + "  sub:\n"
                 + "    type: http\n"
                 + "    url: \"" + url + "\"\n"
+                // 关键：拉订阅必须直连。否则 mihomo 会按 rules 把订阅请求塞进「节点选择」组，
+                // 而组里此时还没节点，形成“没节点→拉不到订阅→更没节点”的死锁（日志里表现为
+                // sub pull error: context deadline exceeded，节点列表只剩 1 个）。
+                + "    proxy: DIRECT\n"
                 + "    interval: 86400\n"
                 + "    path: ./proxies/sub.yaml\n"
+                // 订阅节点普遍不声明 udp，mihomo 默认不中继 UDP，会导致游戏 DNS 与 Photon(UDP 5056) 全断
+                + "    override:\n"
+                + "      udp: true\n"
                 + "    health-check:\n"
                 + "      enable: true\n"
-                + "      url: http://www.gstatic.com/get?\n"
+                + "      url: http://www.gstatic.com/generate_204\n"
                 + "      interval: 300\n"
                 + "\n"
                 + "proxy-groups:\n"
@@ -378,6 +572,7 @@ public class MihomoProcessManager
                 + "      - sub\n"
                 + "\n"
                 + "rules:\n"
+                + (subscriptionHost.isEmpty() ? "" : "  - DOMAIN-SUFFIX," + subscriptionHost + ",DIRECT\n")
                 + "  - MATCH,节点选择\n";
 
         File configFile = new File(configDir, CONFIG_FILE_NAME);

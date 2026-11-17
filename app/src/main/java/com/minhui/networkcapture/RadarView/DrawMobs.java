@@ -22,6 +22,7 @@ import java.util.ArrayList;
 public class DrawMobs
 {
     ArrayList<Mob> mobList;
+    public int drawnCount;
     Paint paintMobCircle;
     Paint paintMobHp;
     Paint paintTreasure;
@@ -76,6 +77,7 @@ public class DrawMobs
 
     public void draw(Canvas canvas, float lpX, float lpY, Matrix transformationMatrix , BitmapCache bitmapCache)
     {
+        drawnCount = 0;
         mobList =(MainHandler.getInstance().mobsHandler.getMobList());
         int desiredWidth = RadarSettings.getInstance().mobIconWidthHeightBar;
         int desiredHeight = RadarSettings.getInstance().mobIconWidthHeightBar;
@@ -145,6 +147,8 @@ public class DrawMobs
             {
                 continue;
             }
+
+            drawnCount++;
 
             float mobX =  m.getPosX()*-1+ lpX;
             float mobY =  m.getPosY()- lpY;

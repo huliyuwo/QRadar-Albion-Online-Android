@@ -22,6 +22,15 @@
 
 
             <androidx.appcompat.widget.SwitchCompat
+                android:id="@+id/radarRenderSwitch"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_margin="5dp"
+                android:padding="8dp"
+                android:text="雷达渲染（关闭后屏幕上的标记全部消失）"
+                android:textSize="15dp" />
+
+            <androidx.appcompat.widget.SwitchCompat
                 android:id="@+id/upstreamProxySwitch"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -428,9 +437,9 @@
                 android:layout_height="wrap_content"/>
 
             <SeekBar
-                android:max="500"
-                android:min="100"
-                android:progress="5"
+                android:max="800"
+                android:min="10"
+                android:progress="100"
                 android:padding="5dp"
                 android:id="@+id/radarScaleBar"
                 android:layout_width="match_parent"

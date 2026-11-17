@@ -24,6 +24,9 @@ public class HarvestingDraw
     View view;
     float[] tempPos = new float[2];
     Paint paintHarvestingSize;
+    Paint fallbackPaint;
+    /** 本帧实际画出的采集物数量（诊断用） */
+    public int drawnCount;
     public void init(View view)
     {
         this.view = view;
@@ -36,6 +39,11 @@ public class HarvestingDraw
         paintHarvestingSize.setStyle(Paint.Style.FILL);
         paintHarvestingSize.setTextAlign(Paint.Align.CENTER);
         paintHarvestingSize.setTextSize(RadarSettings.getInstance().harvestingIconTextSizeBar);
+
+        fallbackPaint = new Paint();
+        fallbackPaint.setStyle(Paint.Style.FILL);
+        fallbackPaint.setColor(0xFF66BB6A);
+        fallbackPaint.setAntiAlias(true);
     }
 
     public void setTextSize(int size)
@@ -45,6 +53,7 @@ public class HarvestingDraw
 
     public void draw(Canvas canvas, float lpX , float lpY , Matrix transformationMatrix , BitmapCache bitmapCache)
     {
+        drawnCount = 0;
         ArrayList<Harvestable> harvestables = MainHandler.getInstance().harvestablesHandler.getHarvestableList();
 
         int desiredWidth = RadarSettings.getInstance().harvestingWidthHeightBar;
@@ -58,12 +67,26 @@ public class HarvestingDraw
                 continue;
             }
 
-            if(!RadarSettings.getInstance().harvestingTiers[h.getTier() -1])
+            int tierIndex = h.getTier() - 1;
+
+            if (tierIndex < 0 || tierIndex >= RadarSettings.getInstance().harvestingTiers.length)
             {
                 continue;
             }
 
-            if(!RadarSettings.getInstance().harvestingEnchants[h.getEnchant()])
+            if(!RadarSettings.getInstance().harvestingTiers[tierIndex])
+            {
+                continue;
+            }
+
+            int enchantIndex = h.getEnchant();
+
+            if (enchantIndex < 0 || enchantIndex >= RadarSettings.getInstance().harvestingEnchants.length)
+            {
+                continue;
+            }
+
+            if(!RadarSettings.getInstance().harvestingEnchants[enchantIndex])
             {
                 continue;
             }
@@ -130,22 +153,35 @@ public class HarvestingDraw
 
             Bitmap bitmap = bitmapCache.getBitmapFromMemCache(totalName);
 
-            if(bitmap == null)
+            if (bitmap == null)
             {
-                Log.d("Harvesting nameBitmap", ""+totalName);
-
                 int resourceId = view.getResources().getIdentifier(totalName, "drawable", view.getContext().getPackageName());
+                Drawable drawable = resourceId == 0 ? null : ContextCompat.getDrawable(view.getContext(), resourceId);
 
-                Drawable drawable = ContextCompat.getDrawable(view.getContext(), resourceId);
-                BitmapDrawable bitmapDrawable = (BitmapDrawable) drawable;
-                bitmap = bitmapDrawable.getBitmap();
-                bitmapCache.addBitmapToMemoryCache(totalName,bitmap);
+                if (drawable instanceof BitmapDrawable)
+                {
+                    bitmap = ((BitmapDrawable) drawable).getBitmap();
+
+                    if (bitmap != null)
+                    {
+                        bitmapCache.addBitmapToMemoryCache(totalName, bitmap);
+                    }
+                }
+            }
+
+            if (bitmap == null)
+            {
+                // 缺图兜底：至少画一个圆点，避免整片空白
+                canvas.drawCircle(tempPos[0], tempPos[1], desiredWidth * 0.3f, fallbackPaint);
+                drawnCount++;
+                continue;
             }
 
             int offsetX = (int) (tempPos[0] - (desiredWidth / 2));
             int offsetY = (int) (tempPos[1] - (desiredHeight / 2));
-            bitmap= Bitmap.createScaledBitmap(bitmap, desiredWidth, desiredHeight, false);
-            canvas.drawBitmap(bitmap , offsetX , offsetY,null);
+            bitmap = Bitmap.createScaledBitmap(bitmap, desiredWidth, desiredHeight, false);
+            canvas.drawBitmap(bitmap, offsetX, offsetY, null);
+            drawnCount++;
 
             if(RadarSettings.getInstance().harvestingSize)
             {

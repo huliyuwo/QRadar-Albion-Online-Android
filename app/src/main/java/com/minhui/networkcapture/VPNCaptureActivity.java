@@ -80,6 +80,30 @@ public class VPNCaptureActivity extends FragmentActivity
 
     private ImageView vpnButton;
 
+    /**
+     * 用真实运行状态刷新右上角按钮：
+     * 之前的图标只在 onVpnStart/onVpnEnd 回调里更新，Activity 被重建（切到后台被回收、
+     * 从游戏返回等）后图标会回到 XML 默认的绿色"开启"图标，而系统里的 VPN 其实还开着，
+     * 造成 App 显示与系统状态不一致。这里在 onCreate/onResume 时主动同步一次。
+     */
+    private void syncVpnButtonState()
+    {
+        if (vpnButton == null)
+        {
+            return;
+        }
+
+        boolean running = VpnServiceHelper.vpnRunningStatus();
+        vpnButton.setImageResource(running ? R.mipmap.ic_stop : R.mipmap.ic_start);
+    }
+
+    @Override
+    protected void onResume()
+    {
+        super.onResume();
+        syncVpnButtonState();
+    }
+
     String[] needPermissions = {Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE};
     String[] needOverlayPermission = {Manifest.permission.SYSTEM_ALERT_WINDOW};
 
@@ -154,6 +178,7 @@ public class VPNCaptureActivity extends FragmentActivity
 
         vpnButton.setEnabled(true);
         ProxyConfig.Instance.registerVpnStatusListener(vpnStatusListener);
+        syncVpnButtonState();
 
         if (!Settings.canDrawOverlays(this))
         {
@@ -196,6 +221,15 @@ public class VPNCaptureActivity extends FragmentActivity
     private void startRadarWindowService()
     {
         DebugLog.i("startRadar(%d)\n", 1);
+
+        // 用户可在设置页关闭雷达渲染；关闭状态下启动 VPN 不再自动弹出悬浮窗
+        boolean enabled = android.preference.PreferenceManager.getDefaultSharedPreferences(this)
+                .getBoolean("radarRenderEnabled", true);
+
+        if (!enabled)
+        {
+            return;
+        }
 
         windowService = new Intent(this, RadarDrawView.class);
         startService(windowService);

@@ -187,6 +187,13 @@ public class TcpProxyServer implements Runnable
         try
         {
             SocketChannel localChannel = mServerSocketChannel.accept();
+
+            // 关掉 Nagle：应用侧往这个 socket 写的是"远端 MSS 大小"的块（约 1460B），
+            // 而本 socket 的 MSS 由 tun 的 MTU(2048) 算出（约 2008B），
+            // 每个块都算"小段"，Nagle 会等前一段被 ACK 才发下一段，
+            // 相当于一个 RTT 只走 1460B，实测把隧道带宽压到 ~70KB/s。
+            localChannel.socket().setTcpNoDelay(true);
+
             localTunnel = TunnelFactory.wrap(localChannel, mSelector);
             short portKey = (short) localChannel.socket().getPort();
             InetSocketAddress destAddress = getDestAddress(localChannel);

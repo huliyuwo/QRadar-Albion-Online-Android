@@ -24,7 +24,7 @@ import java.util.concurrent.Executors;
 /**
  * mihomo（Clash Meta 内核）REST API 客户端。
  *
- * 前提：Termux 里的 mihomo 配置了 external-controller: 127.0.0.1:9090（不设 secret）。
+ * 前提：内置 mihomo 子进程监听 external-controller 127.0.0.1:9090（不设 secret）。
  * 提供三个能力，全部在后台线程执行、主线程回调：
  * 1. fetchSelectorGroup  —— GET /proxies，自动找到第一个 Selector 分组（节点列表 + 当前选中）
  * 2. selectNode          —— PUT /proxies/{group}，切换节点
@@ -57,6 +57,11 @@ public class MihomoApiClient
     private static final int CONTROLLER_PORT = 9090;
     private static final int TIMEOUT_MS = 5000;
 
+    /** 我们生成的配置里 Selector 分组的名字。 */
+    private static final String PREFERRED_GROUP = "节点选择";
+    /** mihomo 自动生成的全局组，只含 DIRECT/REJECT/各组名，不能当作节点列表。 */
+    private static final String GLOBAL_GROUP = "GLOBAL";
+
     private static final ExecutorService executor = Executors.newSingleThreadExecutor();
     private static final Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -86,6 +91,7 @@ public class MihomoApiClient
                 }
 
                 NodeGroup fallback = null;
+                NodeGroup preferred = null;
                 Iterator<String> names = proxies.keys();
 
                 while (names.hasNext())
@@ -111,19 +117,21 @@ public class MihomoApiClient
 
                     NodeGroup group = new NodeGroup(name, proxy.optString("now"), all);
 
-                    if (!all.isEmpty())
+                    if (PREFERRED_GROUP.equals(name) && !all.isEmpty())
                     {
-                        postSuccess(callback, group);
-                        return;
+                        preferred = group;
                     }
-
-                    if (fallback == null)
+                    else if (!GLOBAL_GROUP.equals(name) && !all.isEmpty() && fallback == null)
                     {
                         fallback = group;
                     }
                 }
 
-                if (fallback != null)
+                if (preferred != null)
+                {
+                    postSuccess(callback, preferred);
+                }
+                else if (fallback != null)
                 {
                     postSuccess(callback, fallback);
                 }

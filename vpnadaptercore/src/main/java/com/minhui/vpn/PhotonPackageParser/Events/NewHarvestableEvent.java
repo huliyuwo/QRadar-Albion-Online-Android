@@ -19,8 +19,52 @@ public class NewHarvestableEvent
         MainHandler.getInstance().harvestablesHandler.updateHarvestable(id,charges,enchantment);
     }
 
+    private static int diagHarvestCount;
+
+    /** 临时诊断：把 NewHarvestableObject 的参数原样打出来，用于确认 1.32 的字段下标。 */
+    private void logHarvestParams(HashMap<Object, Object> parameters)
+    {
+        if (diagHarvestCount++ >= 3)
+        {
+            return;
+        }
+
+        StringBuilder builder = new StringBuilder();
+
+        for (Object key : parameters.keySet())
+        {
+            Object value = parameters.get(key);
+            builder.append(key).append('=');
+
+            if (value == null)
+            {
+                builder.append("null");
+            }
+            else if (value instanceof Object[])
+            {
+                Object[] array = (Object[]) value;
+                builder.append("arr[").append(array.length).append("]{");
+                for (int i = 0; i < Math.min(4, array.length); i++)
+                {
+                    builder.append(array[i]).append(',');
+                }
+                builder.append('}');
+            }
+            else
+            {
+                builder.append(value).append('(').append(value.getClass().getSimpleName()).append(')');
+            }
+
+            builder.append(' ');
+        }
+
+        Log.d("RadarDiag", "HARV " + builder);
+    }
+
     public void NewHarvestableObject(HashMap<Object, Object> parameters)
     {
+        logHarvestParams(parameters);
+
         int id = Utils.getNumber(parameters.get(0));
         int type = Utils.getNumber(parameters.get(5));
         int tier = Utils.getNumber(parameters.get(7));
@@ -31,9 +75,73 @@ public class NewHarvestableEvent
         MainHandler.getInstance().harvestablesHandler.removeHarvestable(id);
         MainHandler.getInstance().harvestablesHandler.addHarvestable(id, type, tier, location[0], location[1], charges, enchant);
     }
+    private static int diagListCount;
+
     public void NewSimpleHarvestableObjectList(HashMap<Object, Object> parameters)
     {
         int[] a0 = Utils.getKnownArray(parameters.get(0));
+
+        if (diagListCount++ < 2)
+        {
+            StringBuilder dump = new StringBuilder("HARVLIST size=" + parameters.size());
+
+            for (Object key : parameters.keySet())
+            {
+                Object value = parameters.get(key);
+                dump.append(" [").append(key).append('=');
+
+                if (value instanceof byte[])
+                {
+                    byte[] arr = (byte[]) value;
+                    dump.append("b[").append(arr.length).append("]{");
+                    for (int i = 0; i < Math.min(5, arr.length); i++)
+                    {
+                        dump.append(arr[i]).append(',');
+                    }
+                    dump.append('}');
+                }
+                else if (value instanceof short[])
+                {
+                    short[] arr = (short[]) value;
+
+                    dump.append("s[").append(arr.length).append("]{");
+
+                    for (int i = 0; i < Math.min(5, arr.length); i++)
+                    {
+                        dump.append(arr[i]).append(',');
+                    }
+                    dump.append('}');
+                }
+                else if (value instanceof int[])
+                {
+                    int[] arr = (int[]) value;
+                    dump.append("i[").append(arr.length).append("]{");
+                    for (int i = 0; i < Math.min(5, arr.length); i++)
+                    {
+                        dump.append(arr[i]).append(',');
+                    }
+                    dump.append('}');
+                }
+                else if (value instanceof Object[])
+                {
+                    Object[] arr = (Object[]) value;
+                    dump.append("o[").append(arr.length).append("]{");
+                    for (int i = 0; i < Math.min(5, arr.length); i++)
+                    {
+                        dump.append(arr[i]).append(',');
+                    }
+                    dump.append('}');
+                }
+                else
+                {
+                    dump.append(value).append('(').append(value == null ? "null" : value.getClass().getSimpleName()).append(')');
+                }
+
+                dump.append(']');
+            }
+
+            Log.d("RadarDiag", dump.toString());
+        }
 
         if(a0.length==0)
         {

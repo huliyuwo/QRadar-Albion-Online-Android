@@ -60,7 +60,8 @@ public class RadarSettings
     public int mobRadarSizeBar;
     public int mobIconWidthHeightBar;
     public int chestIconWidthHeightBar;
-    public float radarScaleBar = 2.3f;
+    /** 渲染比例：1.0 = 100%（整张地图等比放进视窗），>1 为放大（以人物为基准）。 */
+    public float radarScaleBar = 1f;
     public int radarSizeWidthHeightBar;
     public int radarMiddleCircleBar;
     public boolean radarShowTopMost = false;
@@ -218,7 +219,7 @@ public class RadarSettings
 
         chestIconWidthHeightBar = sharedPreferences.getInt("chestIconWidthHeightBar", 50);
 
-        radarScaleBar  = sharedPreferences.getFloat("radarScaleBar", 2.3f);
+        radarScaleBar  = sharedPreferences.getFloat("radarScaleBar", 1f);
         radarSizeWidthHeightBar =  sharedPreferences.getInt("radarSizeWidthHeightBar", 200);
 
         radarMiddleCircleBar = sharedPreferences.getInt("radarMiddleCircleBar",10);

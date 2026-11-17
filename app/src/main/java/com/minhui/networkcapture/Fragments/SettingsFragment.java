@@ -54,6 +54,25 @@ public class SettingsFragment extends Fragment
 
         resetRadar.setOnClickListener(view1 -> MainHandler.getInstance().clearAll());
 
+        // 雷达渲染开关：关掉后立刻移除悬浮窗，屏幕上的标记全部消失
+        SwitchCompat radarRenderSwitch = view.findViewById(R.id.radarRenderSwitch);
+        radarRenderSwitch.setChecked(sharedPreferences.getBoolean("radarRenderEnabled", true));
+        radarRenderSwitch.setOnCheckedChangeListener((buttonView, isChecked) ->
+        {
+            editor.putBoolean("radarRenderEnabled", isChecked).apply();
+
+            android.content.Intent intent = new android.content.Intent(view.getContext(), RadarDrawView.class);
+
+            if (isChecked)
+            {
+                view.getContext().startService(intent);
+            }
+            else
+            {
+                view.getContext().stopService(intent);
+            }
+        });
+
         SwitchCompat upstreamProxySwitch = view.findViewById(R.id.upstreamProxySwitch);
         UpstreamProxyConfig.load(view.getContext());
         upstreamProxySwitch.setChecked(UpstreamProxyConfig.isEnabled());
@@ -72,6 +91,9 @@ public class SettingsFragment extends Fragment
                 // 关闭：直连模式，停掉 mihomo 省电
                 MihomoProcessManager.getInstance().stopAsync();
             }
+
+            // 让新出口立刻生效：断开现有 TCP/UDP 会话，新流量按新设置重建
+            com.minhui.vpn.service.FirewallVpnService.closeAllConnections();
 
             // 启动/停止是异步的，延时刷新状态行
             view.postDelayed(() -> updateMihomoStatus(MihomoProcessManager.getInstance(),
@@ -606,7 +628,7 @@ public class SettingsFragment extends Fragment
         SeekBar radarScaleBar= view.findViewById(R.id.radarScaleBar);
 
         int firstTime = (int) (RadarSettings.getInstance().radarScaleBar * 100);
-        String text = String.format("%.2f", RadarSettings.getInstance().radarScaleBar);
+        String text = Math.round(RadarSettings.getInstance().radarScaleBar * 100) + "%";
         radarScaleLabel.setText(view.getContext().getString(R.string.qr_radar_scale_label)+text);
         radarScaleBar.setProgress(firstTime);
 
@@ -616,13 +638,15 @@ public class SettingsFragment extends Fragment
             {
                 float totalProgress =  progress/100f;
 
+                // 先更新缩放值再重算矩阵，否则这一帧用的还是旧比例
+                RadarSettings.getInstance().radarScaleBar = totalProgress;
+
                 if (radarDrawView != null)
                 {
                     radarDrawView.reInitMatrix();
                 }
-                RadarSettings.getInstance().radarScaleBar = totalProgress;
 
-                radarScaleLabel.setText(view.getContext().getString(R.string.qr_radar_scale_label)+totalProgress);
+                radarScaleLabel.setText(view.getContext().getString(R.string.qr_radar_scale_label) + progress + "%");
             }
 
             @Override

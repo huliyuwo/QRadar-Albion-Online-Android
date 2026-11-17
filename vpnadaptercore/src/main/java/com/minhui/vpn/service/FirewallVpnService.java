@@ -8,6 +8,10 @@ import android.content.SharedPreferences;
 import android.net.VpnService;
 import android.os.Handler;
 import android.os.ParcelFileDescriptor;
+import android.system.ErrnoException;
+import android.system.Os;
+import android.system.OsConstants;
+import android.system.StructPollfd;
 import android.util.Log;
 
 import androidx.annotation.Keep;
@@ -25,6 +29,7 @@ import com.minhui.vpn.proxy.UpstreamProxyConfig;
 import com.minhui.vpn.tcpip.IPHeader;
 import com.minhui.vpn.tcpip.TCPHeader;
 import com.minhui.vpn.tcpip.UDPHeader;
+import com.minhui.vpn.tunnel.TcpTunnel;
 import com.minhui.vpn.utils.AppDebug;
 import com.minhui.vpn.utils.CommonMethods;
 import com.minhui.vpn.utils.DebugLog;
@@ -32,6 +37,7 @@ import com.minhui.vpn.utils.ThreadProxy;
 import com.minhui.vpn.utils.TimeFormatUtil;
 import com.minhui.vpn.utils.VpnServiceHelper;
 
+import java.io.FileDescriptor;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -39,6 +45,9 @@ import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.locks.LockSupport;
 
 
 /**
@@ -47,22 +56,29 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 @Keep public class FirewallVpnService extends VpnService implements Runnable
 {
     private static final String VPN_ROUTE = "0.0.0.0"; // Intercept everything
-    private static final String GOOGLE_DNS_FIRST = "8.8.8.8";
-    private static final String GOOGLE_DNS_SECOND = "8.8.4.4";
+    // 国内公共 DNS：Google DNS 的 UDP 53 在国内被阻断，直连 UDP 解析必须用境内可达的 DNS
+    private static final String DNS_FIRST = "223.5.5.5";
+    private static final String DNS_SECOND = "119.29.29.29";
 
     private static int ID;
     private static int LOCAL_IP;
-    private boolean IsRunning = false;
+    // volatile：UI 线程停止 VPN 时改写，工作线程循环里读取，必须保证可见性，
+    // 否则 JIT 可能把旧值缓存在寄存器里，循环永远看不到"已停止"，系统 VPN 一直挂着
+    private volatile boolean IsRunning = false;
     private Thread mVPNThread;
     private ParcelFileDescriptor mVPNInterface;
     private TcpProxyServer mTcpProxyServer;
     private FileOutputStream mVPNOutputStream;
 
+    private final Object tunWriteLock = new Object();
+    private volatile boolean udpWriterRunning = false;
+    private Thread udpWriterThread;
+
     private byte[] mPacket;
     private IPHeader mIPHeader;
     private TCPHeader mTCPHeader;
     private Handler mHandler;
-    private ConcurrentLinkedQueue<Packet> udpQueue;
+    private LinkedBlockingQueue<Packet> udpQueue;
     private FileInputStream in;
     private UDPServer udpServer;
     private final String selectPackage =  "com.albiononline";
@@ -91,11 +107,30 @@ import java.util.concurrent.ConcurrentLinkedQueue;
         DebugLog.i("New VPNService(%d)\n", ID);
     }
 
+    private static volatile FirewallVpnService currentInstance;
+
+    /** 代理开关切换时调用：断开现有 TCP/UDP 会话，让新流量按新出口重建。雷达抓包线程不受影响。 */
+    public static void closeAllConnections()
+    {
+        FirewallVpnService service = currentInstance;
+
+        if (service != null && service.udpServer != null)
+        {
+            service.udpServer.closeAllUDPConn();
+        }
+
+        TcpTunnel.closeAll();
+        // 每次切换重新开始：之前判定"只能直连"的主机允许再试一次代理
+        UpstreamProxyConfig.clearRuntimeDirectHosts();
+        DebugLog.i("closeAllConnections: switch route for new flows\n");
+    }
+
     //启动Vpn工作线程
     @Override
     public void onCreate()
     {
         DebugLog.i("VPNService(%s) created.\n", ID);
+        currentInstance = this;
         sp = getSharedPreferences(VPN_SP_NAME, Context.MODE_PRIVATE);
         UpstreamProxyConfig.load(this);
         VpnServiceHelper.onVpnServiceCreated(this);
@@ -117,10 +152,13 @@ import java.util.concurrent.ConcurrentLinkedQueue;
     @Override public void onDestroy()
     {
         Log.d("VPNService","stopped");
+        currentInstance = null;
         DebugLog.i("VPNService(%s) destroyed.\n", ID);
 
         if (mVPNThread != null)
         {
+            IsRunning = false;
+            wakeupTunRead();
             mVPNThread.interrupt();
         }
 
@@ -131,7 +169,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
     //建立VPN，同时监听出口流量
     private void runVPN() throws Exception
     {
+        DebugLog.i("DIAG runVPN enter\n");
         this.mVPNInterface = establishVPN();
+        DebugLog.i("DIAG establishVPN done, iface=%s\n", mVPNInterface != null);
         startStream();
     }
 
@@ -142,9 +182,51 @@ import java.util.concurrent.ConcurrentLinkedQueue;
         mVPNOutputStream = new FileOutputStream(mVPNInterface.getFileDescriptor());
         in = new FileInputStream(mVPNInterface.getFileDescriptor());
 
+        // UDP 回包交给独立线程写 tun。主循环不再"每处理一个包睡 10ms"顺带轮询 udpQueue：
+        // 那个 sleep 把整条隧道限死在约 100 包/秒（实测 ~70KB/s、TLS 握手多付 1~2 个 RTT），
+        // 游戏单次 HTTP 请求的 3s 超时就是被它拖出来的。
+        startUdpWriter();
+
+        // tun 的 fd 是非阻塞的：没包时 read 返回 0 而不是挂起，直接循环会 100% 空转。
+        // 用 poll 等可读：有包立刻返回，没包最多等 500ms（顺带周期性复查 IsRunning）。
+        StructPollfd pollFd = new StructPollfd();
+        pollFd.fd = mVPNInterface.getFileDescriptor();
+        pollFd.events = (short) OsConstants.POLLIN;
+        StructPollfd[] pollFds = new StructPollfd[]{pollFd};
+        boolean pollSupported = true;
+
         while (size != -1 && IsRunning)
         {
-            boolean hasWrite = false;
+            if (pollSupported)
+            {
+                try
+                {
+                    pollFd.revents = 0;
+                    Os.poll(pollFds, 500);
+
+                    if ((pollFd.revents & OsConstants.POLLIN) == 0)
+                    {
+                        continue;
+                    }
+                }
+                catch (ErrnoException e)
+                {
+                    // EINTR 之类的临时错误，下一轮重试即可
+                    continue;
+                }
+                catch (Throwable t)
+                {
+                    // 老系统上 Os.poll 不可用时退回"读一次让出 1ms"的轮询模式
+                    pollSupported = false;
+                    DebugLog.i("Os.poll unavailable: %s\n", t.toString());
+                    continue;
+                }
+            }
+            else
+            {
+                // 退化轮询：1ms 一次的节流，避免烧 CPU
+                LockSupport.parkNanos(1_000_000L);
+            }
 
             size = in.read(mPacket);
 
@@ -156,27 +238,84 @@ import java.util.concurrent.ConcurrentLinkedQueue;
                     throw new Exception("LocalServer stopped.");
                 }
 
-                hasWrite = onIPPacketReceived(mIPHeader, size);
+                onIPPacketReceived(mIPHeader, size);
             }
-
-            if (!hasWrite)
-            {
-                Packet packet = udpQueue.poll();
-
-                if (packet != null)
-                {
-                    ByteBuffer bufferFromNetwork = packet.backingBuffer;
-                    bufferFromNetwork.flip();
-
-                    mVPNOutputStream.write(bufferFromNetwork.array());
-                }
-            }
-
-            Thread.sleep(10);
         }
 
         in.close();
+        DebugLog.i("DIAG startStream exit: size=%d IsRunning=%s\n", size, IsRunning);
         disconnectVPN();
+    }
+
+    /** 专用线程把 UDPServer 的回包写回 tun，避免主循环为了轮询队列而空转/限速。 */
+    private void startUdpWriter()
+    {
+        // VPN 重建时可能留下上一轮的写线程，先让它退出，避免两个线程同时往 tun 写
+        udpWriterRunning = false;
+
+        if (udpWriterThread != null)
+        {
+            udpWriterThread.interrupt();
+            udpWriterThread = null;
+        }
+
+        udpWriterRunning = true;
+
+        Thread writer = new Thread(() ->
+        {
+            while (udpWriterRunning && IsRunning)
+            {
+                Packet packet;
+
+                try
+                {
+                    // 阻塞取队列（不轮询，空闲时 CPU 为零）
+                    packet = udpQueue.poll(1, TimeUnit.SECONDS);
+                }
+                catch (InterruptedException e)
+                {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+
+                if (packet == null)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    ByteBuffer buffer = packet.backingBuffer;
+                    buffer.flip();
+
+                    // 只写 limit 字节：之前写的是整个 array（2560B 缓冲），
+                    // 会在 tun 里多带一截垃圾数据
+                    writeToTun(buffer.array(), 0, buffer.limit());
+                }
+                catch (Exception e)
+                {
+                    // 隧道正在关闭时的写入失败属正常情况
+                }
+            }
+        }, "TunUdpWriter");
+
+        writer.setDaemon(true);
+        writer.start();
+        udpWriterThread = writer;
+    }
+
+    /** TCP 转发线程与 UDP 写回线程共用同一个 tun 输出流，必须串行写。 */
+    private void writeToTun(byte[] data, int offset, int length) throws IOException
+    {
+        synchronized (tunWriteLock)
+        {
+            if (mVPNOutputStream == null)
+            {
+                throw new IOException("tun output stream is closed");
+            }
+
+            mVPNOutputStream.write(data, offset, length);
+        }
     }
 
     boolean onIPPacketReceived(IPHeader ipHeader, int size) throws IOException
@@ -244,6 +383,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
         {
             //VPNLog.d(TAG, "process  tcp packet from net ");
             NatSession session = NatSessionManager.getSession(tcpHeader.getDestinationPort());
+            Log.d("FirewallVpnService", "DIAG tcp from-net src=" + CommonMethods.ipIntToString(ipHeader.getSourceIP()) + ":" + tcpHeader.getSourcePort() + " dst=" + CommonMethods.ipIntToString(ipHeader.getDestinationIP()) + ":" + tcpHeader.getDestinationPort() + " session=" + (session != null) + " size=" + size + " " + tcpHeader.toString());
 
             if (session != null)
             {
@@ -252,7 +392,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
                 ipHeader.setDestinationIP(LOCAL_IP);
 
                 CommonMethods.ComputeTCPChecksum(ipHeader, tcpHeader);
-                mVPNOutputStream.write(ipHeader.mData, ipHeader.mOffset, size);
+                writeToTun(ipHeader.mData, ipHeader.mOffset, size);
                 //mReceivedBytes += size;
             }
             else
@@ -288,6 +428,11 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
             int tcpDataSize = ipHeader.getDataLength() - tcpHeader.getHeaderLength();
 
+            if (tcpDataSize == 0)
+            {
+                Log.d("FirewallVpnService", "DIAG tcp to-net src=" + CommonMethods.ipIntToString(ipHeader.getSourceIP()) + ":" + tcpHeader.getSourcePort() + " dst=" + CommonMethods.ipIntToString(ipHeader.getDestinationIP()) + ":" + tcpHeader.getDestinationPort() + " pktSent=" + session.packetSent);
+            }
+
             if (session.packetSent == 2 && tcpDataSize == 0)
             {
                 return false;
@@ -314,7 +459,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
             tcpHeader.setDestinationPort(mTcpProxyServer.port);
 
             CommonMethods.ComputeTCPChecksum(ipHeader, tcpHeader);
-            mVPNOutputStream.write(ipHeader.mData, ipHeader.mOffset, size);
+            writeToTun(ipHeader.mData, ipHeader.mOffset, size);
 
             session.bytesSent += tcpDataSize;
             //mSentBytes += size;
@@ -357,12 +502,16 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
         builder.addRoute(VPN_ROUTE, 0);
 
-        builder.addDnsServer(GOOGLE_DNS_FIRST);
-        builder.addDnsServer(GOOGLE_DNS_SECOND);
+        builder.addDnsServer(DNS_FIRST);
+        builder.addDnsServer(DNS_SECOND);
 
         vpnStartTime = System.currentTimeMillis();
         lastVpnStartTimeFormat = TimeFormatUtil.formatYYMMDDHHMMSS(vpnStartTime);
 
+        // 白名单=游戏+雷达自身。雷达必须在名单内：半 NAT 回环依赖内核代发的 SYN-ACK/ACK
+        // 回到 tun，这些包按 socket 属主 UID 路由，雷达 UID 不在名单内会走物理网络断开回环。
+        // mihomo 子进程与雷达同 UID，其连节点/拉订阅的出口流量也会被吸入隧道，
+        // 由 UpstreamProxyConfig 的直连端点集合兜底（命中即直连转发，不再回塞 mihomo）。
         try
         {
             builder.addAllowedApplication(selectPackage);
@@ -370,11 +519,20 @@ import java.util.concurrent.ConcurrentLinkedQueue;
         }
         catch (Exception e)
         {
-            e.printStackTrace();
+            // 游戏未安装时不能退化成全流量捕获，直接放弃建立 VPN
+            throw new Exception("target game not installed: " + selectPackage);
         }
 
         builder.setSession(getString(R.string.app_name));
         ParcelFileDescriptor pfdDescriptor = builder.establish();
+
+        if (mTcpProxyServer != null)
+        {
+            mTcpProxyServer.stop();
+        }
+
+        mTcpProxyServer = new TcpProxyServer(0);
+        mTcpProxyServer.start();
 
         //notifyStatus(new VPNEvent(VPNEvent.Status.ESTABLISHED));
 
@@ -389,11 +547,9 @@ import java.util.concurrent.ConcurrentLinkedQueue;
             DebugLog.i("VPNService(%s) work thread is Running...\n", ID);
 
             waitUntilPrepared();
-            udpQueue = new ConcurrentLinkedQueue<>();
+            udpQueue = new LinkedBlockingQueue<>();
 
-            //启动TCP代理服务
-            mTcpProxyServer = new TcpProxyServer(0);
-            mTcpProxyServer.start();
+            //启动UDP服务（TCP代理服务在 establishVPN 内创建）
             udpServer = new UDPServer(this, udpQueue);
             udpServer.start();
 
@@ -412,6 +568,8 @@ import java.util.concurrent.ConcurrentLinkedQueue;
             {
                 runVPN();
             }
+
+            DebugLog.i("DIAG run while exit, IsRunning=%s\n", IsRunning);
         }
         catch (InterruptedException e)
         {
@@ -460,9 +618,18 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 
     private synchronized void dispose()
     {
+        DebugLog.i("DIAG dispose enter, iface=%s\n", mVPNInterface != null);
+        udpWriterRunning = false;
+
+        if (udpWriterThread != null)
+        {
+            udpWriterThread.interrupt();
+            udpWriterThread = null;
+        }
         try
         {
             disconnectVPN();
+            DebugLog.i("DIAG dispose disconnected\n");
 
             if (mTcpProxyServer != null)
             {
@@ -500,6 +667,47 @@ import java.util.concurrent.ConcurrentLinkedQueue;
     }
 
     public void setVpnRunningStatus(boolean isRunning) {
+        boolean wasRunning = IsRunning;
         IsRunning = isRunning;
+        DebugLog.i("DIAG setVpnRunningStatus %s -> %s, iface=%s\n", wasRunning, isRunning, mVPNInterface != null);
+
+        // 停止时必须唤醒阻塞在 tun 读上的工作线程：
+        // FileInputStream.read 阻塞期间不会检查 IsRunning，没有新包就永远退不出循环，
+        // 结果就是 App 侧按钮已经变绿（认为已停止），系统却一直显示 VPN 已连接。
+        if (wasRunning && !isRunning)
+        {
+            wakeupTunRead();
+        }
+    }
+
+    /**
+     * 向 tun 里送一个"唤醒包"：本进程 uid 在 VPN 白名单内，未保护 socket 发出的 UDP
+     * 包会被路由进 tun，从而让阻塞中的 in.read(mPacket) 立即返回，工作线程得以复查
+     * IsRunning 并退出。包本身由 UDPServer 当作普通 UDP 处理，无副作用。
+     */
+    private void wakeupTunRead()
+    {
+        if (mVPNInterface == null)
+        {
+            return;
+        }
+
+        new Thread(() ->
+        {
+            try
+            {
+                java.net.DatagramSocket socket = new java.net.DatagramSocket();
+                byte[] probe = new byte[]{0};
+                socket.send(new java.net.DatagramPacket(probe, probe.length,
+                        java.net.InetAddress.getByName("1.1.1.1"), 9));
+                socket.close();
+                DebugLog.i("DIAG wakeup packet sent\n");
+            }
+            catch (Exception e)
+            {
+                // 唤醒失败不影响停止流程，接口关闭后 read 也会返回
+                DebugLog.i("DIAG wakeup packet failed: %s\n", e.toString());
+            }
+        }, "TunWakeup").start();
     }
 }

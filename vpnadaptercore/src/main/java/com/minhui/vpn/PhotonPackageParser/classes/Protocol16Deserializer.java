@@ -38,6 +38,20 @@ public class Protocol16Deserializer
         protocol16TypeMap.put((byte) 122, Protocol16Type.ObjectArray);
     }
 
+    /**
+     * 长度字段全部来自网络数据，必须先用剩余字节数校验再分配：
+     * 之前 deserializeIntegerArray 直接 new int[size]，一个被拖偏的包就能申请出 GB 级数组，
+     * 抛 OutOfMemoryError 把整个进程（连同 VpnService）带走，游戏直接断网。
+     */
+    private static void checkRemaining(ByteBuffer input, long requiredBytes, String what)
+    {
+        if (requiredBytes < 0 || requiredBytes > input.remaining())
+        {
+            throw new IllegalArgumentException("malformed Photon data: " + what
+                    + " needs " + requiredBytes + " bytes, only " + input.remaining() + " left");
+        }
+    }
+
     public static Object deserialize(ByteBuffer buffer, byte typeCode)
     {
         Protocol16Type type = protocol16TypeMap.get(typeCode);
@@ -147,6 +161,7 @@ public class Protocol16Deserializer
     private static int[] deserializeIntegerArray(ByteBuffer input)
     {
         int size = deserializeInteger(input);
+        checkRemaining(input, (long) size * 4L, "integer array");
         int[] result = new int[size];
 
         for (int i = 0; i < size; i++)
@@ -190,6 +205,8 @@ public class Protocol16Deserializer
             return "";
         }
 
+        checkRemaining(input, stringSize, "string");
+
         byte[] bytes = new byte[stringSize];
         input.get(bytes);
         return new String(bytes, StandardCharsets.UTF_8);
@@ -201,6 +218,8 @@ public class Protocol16Deserializer
         int arraySize = input.getInt() & 0xFFFFFFFF;
         input.order(ByteOrder.nativeOrder());
 
+        checkRemaining(input, arraySize, "byte array");
+
         byte[] bytes = new byte[arraySize];
         input.get(bytes);
         return bytes;
@@ -209,6 +228,7 @@ public class Protocol16Deserializer
     private static Object[] deserializeArray(ByteBuffer input)
     {
         short size = deserializeShort(input);
+        checkRemaining(input, size, "array");
         byte typeCode = deserializeByte(input);
         Object[] result = new Object[size];
 
@@ -222,6 +242,7 @@ public class Protocol16Deserializer
     private static String[] deserializeStringArray(ByteBuffer input)
     {
         short size = deserializeShort(input);
+        checkRemaining(input, size, "string array");
         String[] result = new String[size];
 
         for (int i = 0; i < size; i++)
@@ -235,6 +256,7 @@ public class Protocol16Deserializer
     private static Object[] deserializeObjectArray(ByteBuffer input)
     {
         short tableSize = deserializeShort(input);
+        checkRemaining(input, tableSize, "object array");
         Object[] result = new Object[tableSize];
 
         for (int i = 0; i < tableSize; i++)
@@ -262,6 +284,8 @@ public class Protocol16Deserializer
 
     private static HashMap<Object, Object> deserializeDictionaryElements(ByteBuffer input, short dictionarySize, byte keyTypeCode, byte valueTypeCode)
     {
+        checkRemaining(input, (long) dictionarySize * 2L, "dictionary");
+
         HashMap<Object, Object> output = new HashMap<>();
 
         for (int i = 0; i < dictionarySize; i++)
@@ -304,8 +328,15 @@ public class Protocol16Deserializer
     {
         input.order(ByteOrder.BIG_ENDIAN);
 
-        short tableSize = (short) (input.getShort() & 0xFFFF);
+        // Photon 的可靠消息头里参数个数只有 1 个字节
+        // （signature 0xF3 + type + eventCode + parameterCount(1B)）；
+        // 原来按 2 字节 short 读，会把第一个参数的 ID 当成个数的高位，
+        // 于是每个包的参数表都错位，抛 "malformed Photon data ..." 后整包丢弃，
+        // 结果是 Handler 永远是空的、雷达没有东西可画。
+        int tableSize = input.get() & 0xFF;
+
         input.order(ByteOrder.nativeOrder());
+        checkRemaining(input, (long) tableSize * 2L, "parameter table");
         HashMap<Object, Object> table = new HashMap<>();
 
         for (int i = 0; i < tableSize; i++)

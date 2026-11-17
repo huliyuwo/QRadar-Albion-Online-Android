@@ -104,6 +104,22 @@ public class PlayersHandler
         }
     }
 
+    /**
+     * 用“移动同步事件”里的坐标更新本地玩家：该事件对场上每个实体的坐标广播，
+     * 里面也包含本地玩家自己，id 与 Join 拿到的 ObjectId 相同。
+     */
+    public void updateLocalPlayerPositionById(int id, float posX, float posY)
+    {
+        synchronized (SharedLocks.localPlayerLock)
+        {
+            if (localPlayer.getId() == id)
+            {
+                localPlayer.setPosX(posX);
+                localPlayer.setPosY(posY);
+            }
+        }
+    }
+
     public void updateLocalPlayer(int characterId, int[] markId, String nickname, String guildName, String cluster, float posX, float posY,
                                   float angle, float currentHealth, float maxHealth, float currentEnergy, float maxEnergy, int faction)
     {
@@ -138,6 +154,14 @@ public class PlayersHandler
         }
     }
 
+
+    public int localPlayerId()
+    {
+        synchronized (SharedLocks.localPlayerLock)
+        {
+            return localPlayer.getId();
+        }
+    }
 
     public  float localPlayerPosX()
     {

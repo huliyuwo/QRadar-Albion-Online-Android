@@ -1,17 +1,21 @@
 package com.minhui.vpn.proxy;
 
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
-import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.nio.channels.SocketChannel;
 
 /**
- * 最小 SOCKS5 客户端（RFC 1928）：无认证握手、TCP CONNECT、UDP ASSOCIATE，
- * 以及 UDP 请求/数据报的帧封装与解帧工具。
- * 用于把 VPN 隧道的流量链式转交给本机上游代理（如 Termux 中不占 VpnService 的 mihomo）。
+ * 最小 SOCKS5 客户端（RFC 1928）：无认证握手、TCP CONNECT、UDP ASSOCIATE。
+ * 用于把 VPN 隧道的流量链式转交给本机上游代理（如内置 mihomo）：
+ *  - TCP 直接作为透明流转发；
+ *  - UDP 走 ASSOCIATE 中继，每包加 10 字节 SOCKS5 UDP 头。
+ * 若节点不支持 UDP，中继无回包，调用方会自动回退直连。
+ *
+ * 基于非阻塞 SocketChannel：channel 已注册到 selector，不能切阻塞模式
+ * （IllegalBlockingModeException），故握手用带截止时间的轮询读写完成；
+ * 对端是本机 mihomo，实际耗时毫秒级，短暂占用 selector 线程可接受。
  */
 public class Socks5Client
 {
@@ -28,13 +32,12 @@ public class Socks5Client
     }
 
     /** 方法协商：仅声明"无认证"。 */
-    public static void handshake(Socket socket) throws IOException
+    public static void handshake(SocketChannel channel, long timeoutMs) throws IOException
     {
-        OutputStream out = socket.getOutputStream();
-        out.write(new byte[]{VERSION, 0x01, AUTH_NONE});
-        out.flush();
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        writeFully(channel, new byte[]{VERSION, 0x01, AUTH_NONE}, deadline);
 
-        byte[] reply = readFully(socket.getInputStream(), 2);
+        byte[] reply = readFully(channel, 2, deadline);
 
         if (reply[0] != VERSION || reply[1] != AUTH_NONE)
         {
@@ -42,37 +45,47 @@ public class Socks5Client
         }
     }
 
-    /** 发起 TCP CONNECT，成功后 socket 即为到目标地址的透明流。 */
-    public static void connect(Socket socket, InetAddress address, int port) throws IOException
+    /** 发起 TCP CONNECT，成功后 channel 即为到目标地址的透明流。 */
+    public static void connect(SocketChannel channel, InetAddress address, int port, long timeoutMs) throws IOException
     {
-        sendRequest(socket, CMD_CONNECT, address, port);
-        readReply(socket);
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        sendRequest(channel, CMD_CONNECT, address, port, deadline);
+        readReply(channel, deadline);
     }
 
-    /** 发起 UDP ASSOCIATE，返回上游中继端点（BND.ADDR/BND.PORT）。 */
-    public static InetSocketAddress udpAssociate(Socket socket) throws IOException
+    /**
+     * 申请 UDP 中继（UDP ASSOCIATE），返回服务端给出的中继地址。
+     * 注意：很多实现（含 mihomo）会返回 0.0.0.0:port，调用方需要把它换成代理主机地址。
+     */
+    public static InetSocketAddress udpAssociate(SocketChannel channel, long timeoutMs) throws IOException
     {
-        sendRequest(socket, CMD_UDP_ASSOCIATE, InetAddress.getByName("0.0.0.0"), 0);
-        return readReply(socket);
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        sendRequest(channel, CMD_UDP_ASSOCIATE, InetAddress.getByName("0.0.0.0"), 0, deadline);
+        return readReply(channel, deadline);
     }
 
-    /** 把一段 UDP payload 封装成 SOCKS5 UDP 请求帧（RSV/FRAG/ATYP/ADDR/PORT/DATA）。 */
-    public static ByteBuffer wrapUdpFrame(InetAddress destination, int destinationPort, ByteBuffer payload)
+    /** 把 UDP payload 封装成 SOCKS5 UDP 请求帧：RSV(2) FRAG(1) ATYP(1) ADDR(n) PORT(2) DATA。 */
+    public static byte[] wrapUdpFrame(InetAddress destination, int destinationPort, ByteBuffer payload)
     {
         byte[] address = destination.getAddress();
-        ByteBuffer frame = ByteBuffer.allocate(4 + address.length + 2 + payload.remaining());
-        frame.put((byte) 0x00);   // RSV
-        frame.put((byte) 0x00);   // RSV
-        frame.put((byte) 0x00);   // FRAG
-        frame.put(atypFor(address));
-        frame.put(address);
-        frame.putShort((short) destinationPort);
-        frame.put(payload);
-        frame.flip();
+        int payloadLength = payload.remaining();
+        byte[] frame = new byte[4 + address.length + 2 + payloadLength];
+
+        int index = 0;
+        frame[index++] = 0x00;   // RSV
+        frame[index++] = 0x00;   // RSV
+        frame[index++] = 0x00;   // FRAG
+        frame[index++] = atypFor(address);
+        System.arraycopy(address, 0, frame, index, address.length);
+        index += address.length;
+        frame[index++] = (byte) ((destinationPort >> 8) & 0xFF);
+        frame[index++] = (byte) (destinationPort & 0xFF);
+        payload.get(frame, index, payloadLength);
+
         return frame;
     }
 
-    /** 解析上游返回的 SOCKS5 UDP 数据报帧头长度，返回 payload 起始偏移。 */
+    /** 解析 SOCKS5 UDP 帧头，返回 payload 在帧内的起始偏移（ATYP 自适应）。 */
     public static int udpFramePayloadOffset(byte[] frame, int frameLength) throws IOException
     {
         if (frameLength < 10)
@@ -81,29 +94,28 @@ public class Socks5Client
         }
 
         int atyp = frame[3] & 0xFF;
-        int offset;
 
         switch (atyp)
         {
-            case 0x01:  // IPv4: 4 字节头 + 4 地址 + 2 端口
-                offset = 10;
-                break;
-            case 0x04:  // IPv6: 4 字节头 + 16 地址 + 2 端口
-                offset = 22;
-                break;
-            case 0x03:  // DOMAIN: 4 字节头 + 1 长度 + N 域名 + 2 端口
-                offset = 5 + (frame[4] & 0xFF) + 2;
-                break;
+            case ATYP_IPV4:
+                return 10;
+
+            case ATYP_IPV6:
+                return 22;
+
+            case ATYP_DOMAIN:
+                int domainLength = frame[4] & 0xFF;
+
+                if (frameLength < 5 + domainLength + 2)
+                {
+                    throw new IOException("SOCKS5 UDP domain header truncated");
+                }
+
+                return 4 + 1 + domainLength + 2;
+
             default:
-                throw new IOException("Unknown SOCKS5 ATYP in datagram: " + atyp);
+                throw new IOException("Unknown SOCKS5 ATYP in UDP frame: " + atyp);
         }
-
-        if (offset > frameLength)
-        {
-            throw new IOException("Malformed SOCKS5 UDP datagram, header " + offset + " > " + frameLength);
-        }
-
-        return offset;
     }
 
     private static byte atypFor(byte[] address)
@@ -111,7 +123,7 @@ public class Socks5Client
         return address.length == 4 ? ATYP_IPV4 : ATYP_IPV6;
     }
 
-    private static void sendRequest(Socket socket, byte command, InetAddress address, int port) throws IOException
+    private static void sendRequest(SocketChannel channel, byte command, InetAddress address, int port, long deadline) throws IOException
     {
         byte[] addr = address.getAddress();
         ByteBuffer request = ByteBuffer.allocate(4 + addr.length + 2);
@@ -122,15 +134,12 @@ public class Socks5Client
         request.put(addr);
         request.putShort((short) port);
 
-        OutputStream out = socket.getOutputStream();
-        out.write(request.array());
-        out.flush();
+        writeFully(channel, request.array(), deadline);
     }
 
-    private static InetSocketAddress readReply(Socket socket) throws IOException
+    private static InetSocketAddress readReply(SocketChannel channel, long deadline) throws IOException
     {
-        InputStream in = socket.getInputStream();
-        byte[] header = readFully(in, 4);
+        byte[] header = readFully(channel, 4, deadline);
 
         if (header[0] != VERSION)
         {
@@ -148,41 +157,74 @@ public class Socks5Client
         switch (atyp)
         {
             case 0x01:
-                boundAddress = InetAddress.getByAddress(readFully(in, 4));
+                boundAddress = InetAddress.getByAddress(readFully(channel, 4, deadline));
                 break;
             case 0x04:
-                boundAddress = InetAddress.getByAddress(readFully(in, 16));
+                boundAddress = InetAddress.getByAddress(readFully(channel, 16, deadline));
                 break;
             case 0x03:
-                int length = in.read() & 0xFF;
-                boundAddress = InetAddress.getByName(new String(readFully(in, length), "ISO-8859-1"));
+                int length = readFully(channel, 1, deadline)[0] & 0xFF;
+                boundAddress = InetAddress.getByName(new String(readFully(channel, length, deadline), "ISO-8859-1"));
                 break;
             default:
                 throw new IOException("Unknown SOCKS5 ATYP in reply: " + atyp);
         }
 
-        byte[] portBytes = readFully(in, 2);
+        byte[] portBytes = readFully(channel, 2, deadline);
         int boundPort = ((portBytes[0] & 0xFF) << 8) | (portBytes[1] & 0xFF);
         return new InetSocketAddress(boundAddress, boundPort);
     }
 
-    private static byte[] readFully(InputStream in, int length) throws IOException
+    private static void writeFully(SocketChannel channel, byte[] data, long deadline) throws IOException
     {
-        byte[] buffer = new byte[length];
-        int offset = 0;
+        ByteBuffer buffer = ByteBuffer.wrap(data);
 
-        while (offset < length)
+        while (buffer.hasRemaining())
         {
-            int read = in.read(buffer, offset, length - offset);
+            if (channel.write(buffer) == 0)
+            {
+                checkDeadline(deadline);
+            }
+        }
+    }
+
+    private static byte[] readFully(SocketChannel channel, int length, long deadline) throws IOException
+    {
+        ByteBuffer buffer = ByteBuffer.allocate(length);
+
+        while (buffer.hasRemaining())
+        {
+            int read = channel.read(buffer);
 
             if (read < 0)
             {
                 throw new IOException("SOCKS5 connection closed by peer");
             }
 
-            offset += read;
+            if (read == 0)
+            {
+                checkDeadline(deadline);
+            }
         }
 
-        return buffer;
+        return buffer.array();
+    }
+
+    private static void checkDeadline(long deadline) throws IOException
+    {
+        if (System.currentTimeMillis() > deadline)
+        {
+            throw new IOException("SOCKS5 handshake timed out");
+        }
+
+        try
+        {
+            Thread.sleep(1);
+        }
+        catch (InterruptedException e)
+        {
+            Thread.currentThread().interrupt();
+            throw new IOException("SOCKS5 handshake interrupted");
+        }
     }
 }

@@ -17,6 +17,7 @@ import java.util.ArrayList;
 public class DrawPlayers
 {
     ArrayList<Player> playerList;
+    public int drawnCount;
     DecimalFormat decimalFormat1Digit = new DecimalFormat("#");
     float[] tempPos = new float[2];
     Paint whitePaint;
@@ -88,6 +89,7 @@ public class DrawPlayers
 
         int distancePlayerOffset = 0;
 
+        drawnCount = 0;
         playerList =(MainHandler.getInstance().playersHandler.getPlayersInRange());
 
         int i = 0;
@@ -105,6 +107,8 @@ public class DrawPlayers
             {
                 continue;
             }
+
+            drawnCount++;
 
             float enemyX =  p.getPosX() * -1 + lpX;
             float enemyY =  p.getPosY() - lpY;

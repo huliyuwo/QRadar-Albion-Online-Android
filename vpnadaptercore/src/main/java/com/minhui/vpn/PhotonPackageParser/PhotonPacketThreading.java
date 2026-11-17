@@ -1,5 +1,7 @@
 package com.minhui.vpn.PhotonPackageParser;
 
+import android.util.Log;
+
 import com.minhui.vpn.PhotonPackageParser.classes.PhotonPacketParser;
 
 import java.nio.ByteBuffer;
@@ -9,6 +11,11 @@ import java.util.concurrent.LinkedBlockingQueue;
 
 public class PhotonPacketThreading
 {
+    private static final String TAG = "PhotonPacketThreading";
+
+    /** 解析追不上时直接丢新包：无界队列在进世界/大范围事件时会把进程内存吃光。 */
+    private static final int MAX_QUEUED_PACKETS = 512;
+
     private ExecutorService executor;
     private LinkedBlockingQueue<ByteBuffer> packetQueue;
     private PhotonPacketParser photonPacketParser = new PhotonPacketParser();
@@ -24,6 +31,11 @@ public class PhotonPacketThreading
     {
         synchronized (packetQueue)
         {
+            if (packetQueue.size() >= MAX_QUEUED_PACKETS)
+            {
+                return;
+            }
+
             packetQueue.offer(packet);
 
             if (packetQueue.size() == 1)
@@ -53,9 +65,12 @@ public class PhotonPacketThreading
                     {
                         photonPacketParser.receive(packet);
                     }
-                    catch (Exception ignored)
+                    catch (Throwable t)
                     {
-
+                        // 解析线程的异常不能把整个进程带走：进程一死 VpnService 跟着没了，
+                        // 游戏的连接会瞬间断开（表现为"一进世界就断网"）。
+                        // 这里连 Error 一起兜住，损坏的包丢弃即可。
+                        Log.e(TAG, "photon packet dropped: " + t);
                     }
 
                     processNextPacket();

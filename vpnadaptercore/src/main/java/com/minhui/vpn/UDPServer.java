@@ -12,6 +12,7 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -22,7 +23,7 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public class UDPServer implements Runnable
 {
     private VpnService vpnService;
-    private ConcurrentLinkedQueue<Packet> outputQueue;
+    private Queue<Packet> outputQueue;
     private Selector selector;
     private static final int MAX_UDP_CACHE_SIZE = 50;
     private final MyLRUCache<Short, UDPTunnel> udpConnections =
@@ -34,7 +35,7 @@ public class UDPServer implements Runnable
         thread.start();
     }
 
-    public UDPServer(VpnService vpnService, ConcurrentLinkedQueue<Packet> outputQueue)
+    public UDPServer(VpnService vpnService, Queue<Packet> outputQueue)
     {
         try
         {
@@ -56,6 +57,7 @@ public class UDPServer implements Runnable
 
         if (udpConn == null)
         {
+            VPNLog.d("UDPServer", "DIAG new udp session key=" + portKey + " dest=" + packet.getIpAndPort());
             udpConn = new UDPTunnel(vpnService, selector, this, packet, outputQueue,portKey);
             putUDPConn(portKey, udpConn);
             udpConn.initConnection();
@@ -112,6 +114,7 @@ public class UDPServer implements Runnable
             while (true)
             {
                 int select = selector.select();
+                VPNLog.d("UDPServer", "DIAG select returned n=" + select);
 
                 if (select == 0)
                 {
@@ -123,6 +126,7 @@ public class UDPServer implements Runnable
                 while (keyIterator.hasNext())
                 {
                     SelectionKey key = keyIterator.next();
+                    VPNLog.d("UDPServer", "DIAG key valid=" + key.isValid() + " w=" + key.isWritable() + " r=" + key.isReadable());
 
                     if (key.isValid())
                     {

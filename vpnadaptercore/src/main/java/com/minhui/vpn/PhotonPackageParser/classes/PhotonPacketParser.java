@@ -59,6 +59,11 @@ public class PhotonPacketParser
                         break;
 
                     case 7: // Send unreliable
+                        if (p.remaining() < 4)
+                        {
+                            return;
+                        }
+
                         p.position(p.position() + 4);
                         commandLength -= 4;
                         // fall through
@@ -68,6 +73,14 @@ public class PhotonPacketParser
                         int messageType = Byte.toUnsignedInt(p.get());
 
                         int operationLength = commandLength - commandHeaderLength - 2;
+
+                        // 命令长度来自网络数据：与缓冲区实际剩余量对不上就说明帧已经损坏，
+                        // 继续解析只会得到错位的长度字段（曾因此申请 4GB 数组把进程 OOM 掉）
+                        if (operationLength < 0 || operationLength > p.remaining())
+                        {
+                            return;
+                        }
+
                         byte[] tempBytes = new byte[operationLength];
                         p.get(tempBytes);
                         ByteBuffer payload = ByteBuffer.wrap(tempBytes);
@@ -75,19 +88,57 @@ public class PhotonPacketParser
                         switch (messageType)
                         {
                             case 2:
+                            {
+                                cntRequest++;
                                 byte operationCode = payload.get();
-                                onRequest(operationCode , Protocol16Deserializer.deserializeOperationRequest(payload));
+                                onRequest(operationCode, Protocol18Deserializer.deserializeOperationRequest(payload));
                                 break;
+                            }
 
                             case 3:
-                                byte operationResponse = payload.get();
-                                onResponse(operationResponse, Protocol16Deserializer.deserializeOperationResponse(payload));
+                            {
+                                cntResponse++;
+                                byte operationCode = payload.get();
+
+                                try
+                                {
+                                    onResponse(operationCode, Protocol18Deserializer.deserializeOperationResponse(payload));
+                                }
+                                catch (Exception e)
+                                {
+                                    if (cntError <= 8)
+                                    {
+                                        StringBuilder hex = new StringBuilder();
+                                        byte[] raw = tempBytes;
+
+                                        for (int i = 0; i < Math.min(40, raw.length); i++)
+                                        {
+                                            hex.append(String.format("%02x", raw[i]));
+                                        }
+
+                                        Log.d("RadarDiag", "RESP fail op=" + Byte.toUnsignedInt(operationCode)
+                                                + " len=" + raw.length + " : " + e + " hex=" + hex);
+                                    }
+
+                                    throw e;
+                                }
+
                                 break;
+                            }
 
                             case 4:
-                                byte eventCode =  payload.get();
-                                onEvent(eventCode , Protocol16Deserializer.deserializeEventData(payload));
+                            {
+                                byte eventCode = payload.get();
+                                onEvent(eventCode, Protocol18Deserializer.deserializeEventData(payload));
+
+                                if (++cntEvent % 300 == 0)
+                                {
+                                    Log.d("RadarDiag", "PKT req=" + cntRequest + " resp=" + cntResponse
+                                            + " evt=" + cntEvent + " err=" + cntError);
+                                }
+
                                 break;
+                            }
 
                             default:
                                 byte eventCode2 =  payload.get();
@@ -110,35 +161,63 @@ public class PhotonPacketParser
         }
         catch (Exception e)
         {
-            System.out.println("PackeHandler Exception: " + e.toString());
+            cntError++;
+
+            if (cntError <= 6)
+            {
+                Log.d("RadarDiag", "PKT err#" + cntError + " req=" + cntRequest + " resp=" + cntResponse
+                        + " evt=" + cntEvent + " : " + e);
+            }
         }
     }
 
     protected void onEvent(byte code , HashMap<Object, Object> Parameters)
     {
-        int Code = -1;
+        // Albion 把真正的事件码放在参数 252（参考 Albion.Network 的 ParseEventCode），
+        // 消息头里那个字节只在某些情况下有意义（3 = 移动同步）。
+        int Code = Byte.toUnsignedInt(code);
+        Object wireEventCode = Parameters.get(252);
+
+        if (wireEventCode instanceof Number)
+        {
+            int eventCode = ((Number) wireEventCode).intValue();
+
+            if (eventCode > 0 && eventCode < EventCodes.values().length)
+            {
+                Code = eventCode;
+            }
+        }
 
         try
         {
-            if(code == 3)
+            if(Code == 3)
             {
-                Code = 3;
-
-                Parameters.put(252 , code);
-
                 int id = Utils.getNumber(Parameters.get(0));
                 byte[] bytes = Utils.getByteArray(Parameters.get(1));
 
                 position[0]= Float.intBitsToFloat(Utils.bytesToInt(bytes, 9));
                 position[1] = Float.intBitsToFloat(Utils.bytesToInt(bytes, 13));
 
+                if (diagMoves++ < 5)
+                {
+                    StringBuilder hex = new StringBuilder();
+
+                    for (int i = 0; i < Math.min(28, bytes == null ? 0 : bytes.length); i++)
+                    {
+                        hex.append(String.format("%02x", bytes[i]));
+                    }
+
+                    Log.d("RadarDiag", "MOVE id=" + id + " len=" + (bytes == null ? -1 : bytes.length)
+                            + " pos=" + position[0] + "," + position[1] + " keys=" + Parameters.keySet()
+                            + " hex=" + hex);
+                }
+
                 newPlayerEvent.updatePlayerPosition(id, position[0], position[1]);
                 newMobEvent.updateMobPosition(id, position[0], position[1]);
+                MainHandler.getInstance().playersHandler.updateLocalPlayerPositionById(id, position[0], position[1]);
             }
             else
             {
-                Code = Utils.getNumber(Parameters.get(252));
-
                 EventCodes eventCode = EventCodes.values()[Code];
 
                 switch (eventCode)
@@ -281,13 +360,34 @@ public class PhotonPacketParser
         EventBus.getDefault().post("refresh");
     }
 
+    private static int diagOps = 0;
+
     protected void onRequest(byte code , HashMap<Object, Object> Parameters)
     {
-        short Code = (short)Parameters.get(253);
+        // Albion 的 OperationRequest 里，消息头字节恒为 1，
+        // 真正的操作码在参数 253。
+        int Code = Byte.toUnsignedInt(code);
+        Object wireOperationCode = Parameters.get(253);
+
+        if (wireOperationCode instanceof Number)
+        {
+            int operationCode = ((Number) wireOperationCode).intValue();
+
+            if (operationCode > 0 && operationCode < OperationCodes.values().length)
+            {
+                Code = operationCode;
+            }
+        }
 
         try
         {
             OperationCodes operationCode = OperationCodes.values()[Code];
+
+            if (diagOps++ < 25)
+            {
+                Log.d("RadarDiag", "OPREQ hdr=" + Byte.toUnsignedInt(code) + " p253=" + wireOperationCode
+                        + " ->" + operationCode + " keys=" + Parameters.keySet());
+            }
 
             switch (operationCode)
             {
@@ -298,8 +398,8 @@ public class PhotonPacketParser
                     float speed = Utils.getFloat(Parameters.get(4));
 
                     MainHandler.getInstance().playersHandler.updateLocalPlayerPosition(pos[0], pos[1], angle, targetpos[0], targetpos[1], speed);
-                    MainHandler.getInstance().harvestablesHandler.removeNotInRange(pos[0],pos[1]);
-                    MainHandler.getInstance().fishingZoneHandler.removeNotInRange(pos[0],pos[1]);
+                    // 不再按 80 码裁剪：服务端只会下发视野内的实体，主动删除只会让雷达"走一路丢一路"。
+                    // 实体离开视野时服务端会发 Leave/Remove，换图时 clearAll() 也会清空。
                     break;
 
                 case ChangeCluster :
@@ -319,13 +419,48 @@ public class PhotonPacketParser
         EventBus.getDefault().post("refresh");
     }
 
+    private static int diagResponses = 0;
+
+    private static int diagMoves = 0;
+
+    private static int cntRequest = 0;
+    private static int cntResponse = 0;
+    private static int cntEvent = 0;
+    private static int cntError = 0;
+
     protected void onResponse(byte code , HashMap<Object, Object> Parameters)
     {
-        short Code = (short)Parameters.get(253);
+        int Code = Byte.toUnsignedInt(code);
+        Object wireOperationCode = Parameters.get(253);
+
+        if (wireOperationCode instanceof Number)
+        {
+            int operationCode = ((Number) wireOperationCode).intValue();
+
+            if (operationCode > 0 && operationCode < OperationCodes.values().length)
+            {
+                Code = operationCode;
+            }
+        }
 
         try
         {
             OperationCodes operationCode = OperationCodes.values()[Code];
+
+            if (diagResponses++ < 15)
+            {
+                Log.d("RadarDiag", "OPRESP hdr=" + Byte.toUnsignedInt(code) + " p253=" + wireOperationCode
+                        + " ->" + operationCode + " size=" + Parameters.size() + " keys=" + Parameters.keySet());
+            }
+
+            // Join 响应在 1.32 里不一定带 253，只靠操作码分派会漏掉，导致本地玩家 id 一直是 0
+            if (Parameters.size() > 40 && Parameters.containsKey(0) && Parameters.containsKey(2)
+                    && Parameters.containsKey(8))
+            {
+                Log.d("RadarDiag", "JOIN by shape: size=" + Parameters.size() + " p253=" + wireOperationCode);
+                newPlayerEvent.updateLocalPlayer(Parameters);
+                MainHandler.getInstance().playersHandler.localPlayerId();
+            }
 
             switch (operationCode)
             {

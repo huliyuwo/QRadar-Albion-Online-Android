@@ -30,6 +30,33 @@ public class HarvestablesHandler
         }
     }
 
+    /** 超过上限时淘汰离玩家最远的采集物，避免长时间跑图导致内存/绘制量无限增长。 */
+    public void trimToLimit(float lpX, float lpY, int max)
+    {
+        SharedLocks.harvestablesHandlerLock.writeLock().lock();
+
+        try
+        {
+            if (harvestableList.size() <= max)
+            {
+                return;
+            }
+
+            java.util.Collections.sort(harvestableList, (a, b) -> Double.compare(
+                    Utils.calculateDistance(lpX, lpY, a.getPosX(), a.getPosY()),
+                    Utils.calculateDistance(lpX, lpY, b.getPosX(), b.getPosY())));
+
+            while (harvestableList.size() > max)
+            {
+                harvestableList.remove(harvestableList.size() - 1);
+            }
+        }
+        finally
+        {
+            SharedLocks.harvestablesHandlerLock.writeLock().unlock();
+        }
+    }
+
     public void removeNotInRange(float lpX , float lpY)
     {
         SharedLocks.harvestablesHandlerLock.writeLock().lock();

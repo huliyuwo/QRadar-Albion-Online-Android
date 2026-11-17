@@ -45,6 +45,8 @@ public class FishingZoneDraw
         paintHarvestingSize.setTextSize(size);
     }
 
+    public int drawnCount;
+
     public void draw(Canvas canvas, float lpX , float lpY , Matrix transformationMatrix , BitmapCache bitmapCache)
     {
         ArrayList<FishingZone> fishingZone = MainHandler.getInstance().fishingZoneHandler.getFishingZoneList();
