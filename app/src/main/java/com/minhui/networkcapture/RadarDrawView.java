@@ -70,6 +70,10 @@ public class RadarDrawView extends Service
     int screenWidth =0;
     int screenHeight =0;
 
+    /** 上一次布局依据的屏幕尺寸：用于轮询检测横竖屏切换（部分 ROM 不给 Service 发 onConfigurationChanged）。 */
+    private int lastScreenWidth;
+    private int lastScreenHeight;
+
     /** 是否由用户手动定位过（拖动或设置页滑块）。false 时悬浮窗固定屏幕正上方居中 */
     private static final String PREF_USER_POSITIONED = "radarUserPositioned";
     private boolean userPositioned = false;
@@ -620,17 +624,33 @@ public class RadarDrawView extends Service
     public void onConfigurationChanged(Configuration newConfig)
     {
         super.onConfigurationChanged(newConfig);
+        relayoutForCurrentScreen();
+    }
 
-        if (windowManager == null || layoutParams == null || layoutParamsSettingsView == null)
+    /**
+     * 按当前屏幕尺寸重新计算悬浮窗尺寸与位置。
+     *
+     * <p>横竖屏切换后坐标系整体变化，沿用旧坐标会让悬浮窗跑到屏幕外或压住状态栏；
+     * 而部分 ROM（ColorOS/realme 等）不会给后台 Service 派发 onConfigurationChanged，
+     * 所以 watchdog 每 3 秒也会比对一次屏幕尺寸并调用本方法作为兜底。
+     */
+    private void relayoutForCurrentScreen()
+    {
+        if (windowManager == null || layoutParams == null || layoutParamsSettingsView == null || overlayView == null)
         {
             return;
         }
 
-        // 横竖屏切换后显示坐标系整体变了，必须按新尺寸重新计算位置，
-        // 否则沿用旧坐标会出现悬浮窗跑到屏幕外或不再居中。
         refreshScreenMetrics();
 
-        int size = (layoutParams.width > 0) ? layoutParams.width : (int) (screenHeight * 0.32f);
+        int size = (layoutParams.width > 0) ? layoutParams.width : (int) (Math.min(screenWidth, screenHeight) * 0.32f);
+
+        // 竖屏时可用宽度可能小于横屏时代算出的尺寸，必须一起收敛
+        int maxSide = Math.max(dpToPx(120), Math.min(screenWidth, screenHeight) - dpToPx(40));
+        size = Math.max(dpToPx(120), Math.min(size, maxSide));
+
+        layoutParams.width = size;
+        layoutParams.height = size;
 
         if (userPositioned)
         {
@@ -647,15 +667,25 @@ public class RadarDrawView extends Service
             layoutParamsSettingsView.y = topInset();
         }
 
-        windowManager.updateViewLayout(overlayView, layoutParams);
-        windowManager.updateViewLayout(overlaySettingsView, layoutParamsSettingsView);
-
-        if (showRadarActivitySettings)
+        try
         {
-            positionSettingsPanel();
-        }
-    }
+            windowManager.updateViewLayout(overlayView, layoutParams);
+            windowManager.updateViewLayout(overlaySettingsView, layoutParamsSettingsView);
 
+            if (showRadarActivitySettings)
+            {
+                positionSettingsPanel();
+            }
+        }
+        catch (Throwable e)
+        {
+            Log.w("RadarDiag", "relayoutForCurrentScreen failed: " + e);
+        }
+
+        RadarSettings.getInstance().radarSizeWidthHeightBar = size;
+        lastScreenWidth = screenWidth;
+        lastScreenHeight = screenHeight;
+    }
     private static int maxOffset(int screenSize, int viewSize)
     {
         return Math.max(0, screenSize - viewSize);
