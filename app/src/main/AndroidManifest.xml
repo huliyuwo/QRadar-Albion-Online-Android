@@ -42,6 +42,8 @@
            不写 screenOrientation：跟随系统方向，Activity 重建时按新方向排版。 -->
       <activity
           android:name="com.minhui.networkcapture.RadarActivities.RenderOptionsActivity"
+          android:taskAffinity="com.qradar.albion.renderoptions"
+          android:excludeFromRecents="true"
           android:theme="@style/ToolbarTheme" />
 
         <service

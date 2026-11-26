@@ -74,7 +74,8 @@ public class RadarFloatingActivity
         {
             Intent intent = new Intent(context, RenderOptionsActivity.class);
             // 从悬浮窗（Service 上下文）启动 Activity 必须带 NEW_TASK
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            // 独立任务栈：按返回直接回到游戏，而不是回到雷达首页
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
             context.startActivity(intent);
 
             if (radarDrawView != null)
