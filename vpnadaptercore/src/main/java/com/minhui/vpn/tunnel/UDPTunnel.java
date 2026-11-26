@@ -551,35 +551,12 @@ public class UDPTunnel implements KeyHandler
             return;
         }
 
-        if (attempt <= DNS_MAX_RETRY)
-        {
-            DnsStats.recordRetry();
-            VPNLog.w("VPNLog", "DNSWATCH retry attempt=" + attempt + " " + ipAndPort);
-
-            if (writeDnsPayload(expected.payload))
-            {
-                try
-                {
-                    dnsWatchdogFuture = DNS_WATCHDOG_EXECUTOR.schedule(
-                            () -> onDnsWatchdog(expected, attempt + 1), DNS_RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
-                    return;
-                }
-                catch (Throwable ignored)
-                {
-                }
-            }
-        }
-
-        DnsStats.recordServfail();
-        VPNLog.w("VPNLog", "DNSWATCH no reply, reply SERVFAIL " + ipAndPort);
-
-        byte[] servfail = DnsMessage.buildServFailResponse(expected.payload, 0, expected.payload.length);
-
-        if (servfail != null)
-        {
-            sendDnsResponse(servfail, expected.serverAddress, expected.serverPort);
-        }
-
+        // 不再重发查询、也不再伪造 SERVFAIL：
+        // 上游（比如 223.5.5.5）在弱网下常需要 1~1.5s 才回包，而重发/SERVFAIL 会和
+        // 真实应答赛跑；一旦 SERVFAIL 先到，客户端就得到“域名解析失败”，表现为偶发连不上。
+        // 这里只做记录并清理等待状态，把重试交给客户端自己的解析器。
+        DnsStats.recordRetry();
+        VPNLog.w("VPNLog", "DNSWATCH no reply within " + DNS_RETRY_DELAY_MS + "ms, leave retry to client " + ipAndPort);
         pendingDns = null;
     }
 

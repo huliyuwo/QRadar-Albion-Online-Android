@@ -229,8 +229,9 @@ public abstract class TcpTunnel implements KeyHandler
             mConnectEstablished = false;
 
             // 兜底超时：建连（含 SOCKS5 握手）超时就主动断开，让客户端尽快重试。
+            // 被墙目标（Google 广告/统计）用更短超时快速失败，避免拖慢游戏启动。
             mConnectTimeoutFuture = CONNECT_TIMEOUT_EXECUTOR.schedule(this::onConnectTimeout,
-                    CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+                    connectTimeoutFor(destAddress), TimeUnit.MILLISECONDS);
 
             mInnerChannel.register(mSelector, SelectionKey.OP_CONNECT, this);
             mInnerChannel.connect(mServerEP);
