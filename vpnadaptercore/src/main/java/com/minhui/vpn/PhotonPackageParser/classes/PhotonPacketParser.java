@@ -91,7 +91,10 @@ public class PhotonPacketParser
                             {
                                 cntRequest++;
                                 byte operationCode = payload.get();
-                                onRequest(operationCode, Protocol18Deserializer.deserializeOperationRequest(payload));
+                                java.util.HashMap<Object, Object> params =
+                                        Protocol18Deserializer.deserializeOperationRequest(payload);
+                                probeHandshake(params);
+                                onRequest(operationCode, params);
                                 break;
                             }
 
@@ -417,6 +420,28 @@ public class PhotonPacketParser
         }
 
         EventBus.getDefault().post("refresh");
+    }
+
+    private static void probeHandshake(java.util.HashMap<Object, Object> params)
+    {
+        if (params == null || params.isEmpty())
+        {
+            return;
+        }
+
+        for (Object value : params.values())
+        {
+            if (value instanceof byte[])
+            {
+                byte[] bytes = (byte[]) value;
+
+                // DH 公钥长度 96（768-bit）或 128（补零版本），交回 PhotonCrypto 判定
+                if (bytes.length == 96 || bytes.length == 128)
+                {
+                    PhotonCrypto.get().offerPublicKey(bytes);
+                }
+            }
+        }
     }
 
     private static int diagResponses = 0;
