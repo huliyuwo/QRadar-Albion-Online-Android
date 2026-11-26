@@ -102,10 +102,10 @@ public class HarvestingActivity extends AppCompatActivity
         tier8.setChecked(RadarSettings.getInstance().harvestingTiers[7]);
 
         enchant0.setChecked(RadarSettings.getInstance().harvestingEnchants[0]);
-        enchant1.setChecked(RadarSettings.getInstance().harvestingEnchants[0]);
-        enchant2.setChecked(RadarSettings.getInstance().harvestingEnchants[1]);
-        enchant3.setChecked(RadarSettings.getInstance().harvestingEnchants[2]);
-        enchant4.setChecked(RadarSettings.getInstance().harvestingEnchants[3]);
+        enchant1.setChecked(RadarSettings.getInstance().harvestingEnchants[1]);
+        enchant2.setChecked(RadarSettings.getInstance().harvestingEnchants[2]);
+        enchant3.setChecked(RadarSettings.getInstance().harvestingEnchants[3]);
+        enchant4.setChecked(RadarSettings.getInstance().harvestingEnchants[4]);
 
         fiber.setChecked(RadarSettings.getInstance().harvestingFiber);
         wood.setChecked(RadarSettings.getInstance().harvestingWood);

@@ -62,30 +62,56 @@ public class VPNCaptureActivity extends FragmentActivity
         @Override
         public void onVpnStart(Context context)
         {
-            handler.post(()->vpnButton.setImageResource(R.mipmap.ic_stop));
+            // 回调在 VPN 工作线程，UI 更新必须抛回主线程；handler 在字段初始化时创建，
+            // 不会出现“先注册监听、后 new Handler”导致的空指针竞态。
+            postVpnButtonSync();
             startRadarWindowService();
         }
 
         @Override
         public void onVpnEnd(Context context)
         {
-            handler.post(()->vpnButton.setImageResource(R.mipmap.ic_start));
+            postVpnButtonSync();
 
             if(windowService!=null)
             {
-                stopService(windowService);
+                try
+                {
+                    stopService(windowService);
+                }
+                catch (Throwable ignored)
+                {
+                }
             }
         }
     };
 
+    /** 统一走“按真实运行状态刷新”，避免依赖某一次回调时按钮状态还是旧的。 */
+    private void postVpnButtonSync()
+    {
+        handler.post(this::syncVpnButtonState);
+    }
+
     private ImageView vpnButton;
 
-    /**
-     * 用真实运行状态刷新右上角按钮：
-     * 之前的图标只在 onVpnStart/onVpnEnd 回调里更新，Activity 被重建（切到后台被回收、
-     * 从游戏返回等）后图标会回到 XML 默认的绿色"开启"图标，而系统里的 VPN 其实还开着，
-     * 造成 App 显示与系统状态不一致。这里在 onCreate/onResume 时主动同步一次。
-     */
+    private static final long VPN_BUTTON_SYNC_INTERVAL_MS = 1000;
+
+    /** 兜底轮询：即使 VPN 状态回调漏掉（系统收回 VPN、服务被杀等），按钮也能回到正确状态。 */
+    private final Runnable vpnButtonSyncTask = new Runnable()
+    {
+        @Override
+        public void run()
+        {
+            syncVpnButtonState();
+
+            if (handler != null)
+            {
+                handler.postDelayed(this, VPN_BUTTON_SYNC_INTERVAL_MS);
+            }
+        }
+    };
+
+    /** 用真实运行状态刷新右上角按钮（红色=停止 / 绿色=开启）。 */
     private void syncVpnButtonState()
     {
         if (vpnButton == null)
@@ -94,7 +120,16 @@ public class VPNCaptureActivity extends FragmentActivity
         }
 
         boolean running = VpnServiceHelper.vpnRunningStatus();
-        vpnButton.setImageResource(running ? R.mipmap.ic_stop : R.mipmap.ic_start);
+        int expected = running ? R.mipmap.ic_stop : R.mipmap.ic_start;
+
+        // 只在状态变化时设置，避免每秒重复触发 ImageView 重绘
+        if (vpnButton.getTag(R.id.vpn) == null || (Integer) vpnButton.getTag(R.id.vpn) != expected)
+        {
+            vpnButton.setTag(R.id.vpn, expected);
+            vpnButton.setImageResource(expected);
+        }
+
+        vpnButton.setEnabled(true);
     }
 
     @Override
@@ -102,12 +137,21 @@ public class VPNCaptureActivity extends FragmentActivity
     {
         super.onResume();
         syncVpnButtonState();
+        handler.removeCallbacks(vpnButtonSyncTask);
+        handler.postDelayed(vpnButtonSyncTask, VPN_BUTTON_SYNC_INTERVAL_MS);
+    }
+
+    @Override
+    protected void onPause()
+    {
+        super.onPause();
+        handler.removeCallbacks(vpnButtonSyncTask);
     }
 
     String[] needPermissions = {Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE};
     String[] needOverlayPermission = {Manifest.permission.SYSTEM_ALERT_WINDOW};
 
-    private Handler handler;
+    private final Handler handler = new Handler(android.os.Looper.getMainLooper());
 
     @Override
     public void onBackPressed()
@@ -194,7 +238,6 @@ public class VPNCaptureActivity extends FragmentActivity
                 .addToBackStack(null)
                 .commit();
 
-        handler = new Handler();
         RadarSettings.getInstance().init(getApplicationContext());
 
         // 仅当"使用代理"开关打开时才拉起内置 mihomo（直连模式不需要它跑）
@@ -232,7 +275,16 @@ public class VPNCaptureActivity extends FragmentActivity
         }
 
         windowService = new Intent(this, RadarDrawView.class);
-        startService(windowService);
+
+        try
+        {
+            startService(windowService);
+        }
+        catch (Throwable e)
+        {
+            // 后台启动服务在部分 ROM 上会被限制，失败时退回前台 Activity 上下文再试一次
+            DebugLog.e("startRadarWindowService failed: %s\n", e);
+        }
     }
 
     private void requestStoragePermission()
@@ -253,6 +305,12 @@ public class VPNCaptureActivity extends FragmentActivity
     {
         super.onDestroy();
         ProxyConfig.Instance.unregisterVpnStatusListener(vpnStatusListener);
+
+        // 退出前停掉按钮轮询，避免 Handler 泄漏 Activity
+        if (handler != null)
+        {
+            handler.removeCallbacksAndMessages(null);
+        }
     }
 
     @Override

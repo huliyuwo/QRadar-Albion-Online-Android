@@ -169,7 +169,7 @@ public class MobsFragment extends Fragment
 
         enchant3.setOnCheckedChangeListener((compoundButton, b) ->
         {
-            RadarSettings.getInstance().mobEnchants[2] = b;
+            RadarSettings.getInstance().mobEnchants[3] = b;
 
             editor.putBoolean("mobEnchant3", b);
             editor.apply();

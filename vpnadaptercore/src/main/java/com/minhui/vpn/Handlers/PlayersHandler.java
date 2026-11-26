@@ -202,13 +202,24 @@ public class PlayersHandler
 
     public void updatePlayerHealth(int id, float currentHealth)
     {
-        for (Player player : playersInRange)
+        // 与 getPlayersInRange()/addPlayer() 共用同一把锁：解析线程写、渲染线程读，
+        // 不加锁遍历 ArrayList 有概率抛 ConcurrentModificationException 闪退
+        SharedLocks.playerHandlerLock.writeLock().lock();
+
+        try
         {
-            if (player.getId() == id)
+            for (Player player : playersInRange)
             {
-                player.setCurrentHealth(currentHealth);
-                break;
+                if (player.getId() == id)
+                {
+                    player.setCurrentHealth(currentHealth);
+                    break;
+                }
             }
+        }
+        finally
+        {
+            SharedLocks.playerHandlerLock.writeLock().unlock();
         }
     }
 

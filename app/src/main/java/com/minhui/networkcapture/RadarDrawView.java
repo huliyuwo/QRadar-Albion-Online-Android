@@ -117,7 +117,17 @@ public class RadarDrawView extends Service
 
         refreshScreenMetrics();
 
-        showOverlayWindow();
+        try
+        {
+            showOverlayWindow();
+        }
+        catch (Throwable e)
+        {
+            // 悬浮窗权限被收回 / 窗口被系统拒绝时不能把整个进程带崩，直接停止服务
+            Log.e("RadarDiag", "showOverlayWindow failed: " + e);
+            stopSelf();
+            return;
+        }
 
         watchdogHandler.postDelayed(vpnWatchdog, 3000);
     }
@@ -166,29 +176,46 @@ public class RadarDrawView extends Service
         super.onDestroy();
 
         watchdogHandler.removeCallbacks(vpnWatchdog);
+        watchdogHandler.removeCallbacksAndMessages(null);
 
         sInstance = null;
 
-        windowManager.removeView(overlayView);
+        // removeView 在视图未附加/服务异常销毁时会抛 IllegalArgumentException，
+        // 这里必须逐个兜底：onDestroy 抛异常会直接导致“停止 VPN 时闪退”。
+        removeViewSafely(overlayView);
+        removeViewSafely(overlaySettingsView);
+        removeViewSafely(radarFloatingSettingsView);
 
-        if(overlaySettingsView!=null)
+        try
         {
-            windowManager.removeView(overlaySettingsView);
+            MainHandler.getInstance().clearAll();
+        }
+        catch (Throwable e)
+        {
+            Log.e("RadarDiag", "clearAll failed: " + e);
         }
 
-        if(radarFloatingSettingsView!=null)
-        {
-            try
-            {
-                windowManager.removeView(radarFloatingSettingsView);
-            }
-            catch (Exception e)
-            {
+        overlayView = null;
+        overlaySettingsView = null;
+        radarFloatingSettingsView = null;
+        radarDrawView = null;
+    }
 
-            }
+    private void removeViewSafely(View view)
+    {
+        if (view == null || windowManager == null)
+        {
+            return;
         }
 
-        MainHandler.getInstance().clearAll();
+        try
+        {
+            windowManager.removeView(view);
+        }
+        catch (Throwable ignored)
+        {
+            // 未被添加/已被移除，忽略
+        }
     }
 
     RadarView radarDrawView;
