@@ -19,8 +19,10 @@ import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.content.ContextCompat;
 
+import com.minhui.networkcapture.MyApplication;
 import com.minhui.networkcapture.R;
 import com.minhui.networkcapture.RadarView.RadarSettings;
+import com.minhui.vpn.zone.ZoneState;
 
 import java.util.ArrayList;
 import java.util.function.Consumer;
@@ -161,6 +163,17 @@ public class RenderOptionsActivity extends AppCompatActivity
     private void buildRadarSection()
     {
         LinearLayout content = createSection("雷达 / 显示", true);
+
+        // 主城暂停（进入安全城时不解析/不渲染，离开自动恢复）
+        addChoiceRow(content, "主城暂停", "进入主城/安全城时暂停雷达，离开后自动恢复",
+                new String[]{"关闭", "完全不解析不渲染", "仅暂停渲染"},
+                settings.radarCityPauseMode, mode ->
+                {
+                    settings.radarCityPauseMode = mode;
+                    RadarSettings.putInt(this, MyApplication.PREF_CITY_PAUSE_MODE, mode);
+                    // 解析线程 / 渲染线程直接读 ZoneState，改完立刻生效
+                    ZoneState.pauseMode = mode;
+                });
 
         addFloatSliderRow(content, "图标大小", 0.5f, 2.0f, 0.1f, settings.radarIconScale, "x", value ->
         {
@@ -717,6 +730,70 @@ public class RenderOptionsActivity extends AppCompatActivity
         sectionViews.clear();
         buildSections();
         layoutSections();
+    }
+
+    /**
+     * 三选一（分段按钮）：用于「主城暂停」这种枚举型设置。
+     * 选中项用强调色高亮，点其他项时回调并重建页面刷新高亮。
+     */
+    private void addChoiceRow(LinearLayout parent, String title, String subtitle, String[] labels,
+                              int selected, IntConsumer onChange)
+    {
+        LinearLayout wrapper = new LinearLayout(this);
+        wrapper.setOrientation(LinearLayout.VERTICAL);
+        wrapper.setPadding(0, 8 * dp, 0, 4 * dp);
+
+        TextView titleView = new TextView(this);
+        titleView.setText(title);
+        titleView.setTextColor(COLOR_TEXT);
+        titleView.setTextSize(14);
+        wrapper.addView(titleView);
+
+        if (subtitle != null && !subtitle.isEmpty())
+        {
+            TextView subtitleView = new TextView(this);
+            subtitleView.setText(subtitle);
+            subtitleView.setTextColor(COLOR_TEXT_DIM);
+            subtitleView.setTextSize(11);
+            wrapper.addView(subtitleView);
+        }
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setPadding(0, 6 * dp, 0, 0);
+
+        for (int i = 0; i < labels.length; i++)
+        {
+            final int index = i;
+            final boolean active = i == selected;
+
+            TextView button = new TextView(this);
+            button.setText(labels[i]);
+            button.setTextSize(12);
+            button.setGravity(Gravity.CENTER);
+            button.setTextColor(active ? Color.WHITE : COLOR_TEXT_DIM);
+            button.setBackgroundColor(active ? COLOR_ACCENT : 0xFF3A3A3A);
+            button.setPadding(10 * dp, 7 * dp, 10 * dp, 7 * dp);
+
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                    ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            params.rightMargin = 8 * dp;
+            row.addView(button, params);
+
+            button.setOnClickListener(v ->
+            {
+                if (index == selected)
+                {
+                    return;
+                }
+
+                onChange.accept(index);
+                rebuildSections();
+            });
+        }
+
+        wrapper.addView(row);
+        parent.addView(wrapper);
     }
 
     private void addCheckRow(LinearLayout parent, String title, String subtitle, boolean checked,

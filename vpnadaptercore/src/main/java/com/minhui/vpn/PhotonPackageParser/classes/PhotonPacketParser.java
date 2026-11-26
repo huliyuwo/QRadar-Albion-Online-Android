@@ -14,6 +14,7 @@ import com.minhui.vpn.PhotonPackageParser.ProtocolCodeLookup;
 import com.minhui.vpn.PhotonPackageParser.Utils;
 import com.minhui.vpn.PhotonPackageParser.enumerations.EventCodes;
 import com.minhui.vpn.PhotonPackageParser.enumerations.OperationCodes;
+import com.minhui.vpn.zone.ZoneState;
 
 import java.nio.ByteBuffer;
 import java.util.HashMap;
@@ -414,6 +415,12 @@ public class PhotonPacketParser
             return;
         }
 
+        // 主城暂停：完全不解析。事件里没有切图/入场消息（那是 operation），全部丢弃。
+        if (ZoneState.shouldSkipFully())
+        {
+            return;
+        }
+
         if (eventCode == EventCodes.Move)
         {
             handleMoveEvent(parameters);
@@ -665,6 +672,13 @@ public class PhotonPacketParser
             return;
         }
 
+        // 主城暂停：完全不解析。只放行 ChangeCluster —— 它是“离开主城、恢复解析”的唯一入口，
+        // 其余请求（Move / 交互等）全部丢弃。
+        if (ZoneState.shouldSkipFully() && operationCode != OperationCodes.ChangeCluster)
+        {
+            return;
+        }
+
         if (operationCode != OperationCodes.Move && diagOps++ < 25)
         {
             Log.d("RadarDiag", "OPREQ hdr=" + (headerCode & 0xFF) + " p253=" + parameters.get(PARAM_OPERATION_CODE)
@@ -699,8 +713,10 @@ public class PhotonPacketParser
             }
 
             case ChangeCluster:
+                // 参考 PC：换图请求到达时清空上一张图的实体；参数 0 = 目标地图 id
                 Log.d("RadarDiag", "ChangeCluster REQUEST -> clearAll");
                 MainHandler.getInstance().clearAll();
+                updateZone(parameters.get(0));
                 break;
 
             case AuctionGetOffers:
@@ -726,10 +742,12 @@ public class PhotonPacketParser
 
         // Join 响应按 shape 兜底：参数表里同时有 0/2/8 且数量很大，就是 Join。
         // 解析修好后正常走 opcode 分支，这里只防"操作码参数缺失"的极端情况。
+        // 主城暂停时也要走这里：Join 带地图 id（参数 8）与本地玩家信息。
         if (operationCode != OperationCodes.Join && looksLikeJoinResponse(parameters))
         {
             Log.d("RadarDiag", "JOIN by shape: size=" + parameters.size() + " p253=" + parameters.get(PARAM_OPERATION_CODE));
             newPlayerEvent.updateLocalPlayer(parameters);
+            updateZone(parameters.get(8));
             return;
         }
 
@@ -738,16 +756,27 @@ public class PhotonPacketParser
             return;
         }
 
+        // 主城暂停：完全不解析。只放行 Join（本地玩家 + 地图 id）与 ChangeCluster（切图），
+        // 否则无法检测“已经离开主城”，暂停会永远卡住。
+        if (ZoneState.shouldSkipFully()
+                && operationCode != OperationCodes.Join
+                && operationCode != OperationCodes.ChangeCluster)
+        {
+            return;
+        }
+
         switch (operationCode)
         {
             case Join:
                 newPlayerEvent.updateLocalPlayer(parameters);
+                updateZone(parameters.get(8));
                 break;
 
             case ChangeCluster:
-                // 参考 PC：换图响应到达时清空上一张图的实体
+                // 参考 PC：换图响应到达时清空上一张图的实体；参数 0 = 目标地图 id
                 Log.d("RadarDiag", "ChangeCluster RESPONSE -> clearAll");
                 MainHandler.getInstance().clearAll();
+                updateZone(parameters.get(0));
                 break;
 
             case AuctionGetOffers:
@@ -765,6 +794,57 @@ public class PhotonPacketParser
                 && parameters.containsKey(0)
                 && parameters.containsKey(2)
                 && parameters.containsKey(8);
+    }
+
+    /**
+     * 主城暂停的状态机：解析到新地图 id 后更新 {@link ZoneState}，
+     * 并在“进入主城 / 离开主城”的那一刻做清理与日志。
+     *
+     * <p>ChangeCluster（op 41，参数 0 = 目标地图 id）与 Join（参数 8 = 当前 cluster）
+     * 都只在切图/入场时出现，所以即使处于暂停状态也必须调用：
+     * <ul>
+     *   <li>进入主城且 pauseMode=1：立刻 clearAll 释放上一张图的内存，后续包在入口处全部丢弃；</li>
+     *   <li>进入主城且 pauseMode=2：只暂停渲染，解析继续；</li>
+     *   <li>离开主城：打 {@code CITY PAUSE: resumed}，下一次解析立刻恢复正常。</li>
+     * </ul>
+     */
+    private static void updateZone(Object rawZoneId)
+    {
+        if (rawZoneId == null)
+        {
+            return;
+        }
+
+        String zoneId = rawZoneId instanceof Number
+                ? String.valueOf(((Number) rawZoneId).intValue())
+                : String.valueOf(rawZoneId);
+
+        boolean wasCity = ZoneState.isCity;
+        int mode = ZoneState.pauseMode;
+
+        ZoneState.setZone(zoneId);
+
+        boolean nowCity = ZoneState.isCity;
+
+        if (!wasCity && nowCity)
+        {
+            if (mode == ZoneState.MODE_SKIP_ALL)
+            {
+                MainHandler.getInstance().clearAll();
+                Log.d("RadarDiag", "CITY PAUSE: parsing suspended (mode=1 zone="
+                        + ZoneState.zoneId + " name=" + ZoneState.zoneName + ")");
+            }
+            else if (mode == ZoneState.MODE_RENDER_ONLY)
+            {
+                Log.d("RadarDiag", "CITY PAUSE: render suspended (mode=2 zone="
+                        + ZoneState.zoneId + " name=" + ZoneState.zoneName + ")");
+            }
+        }
+        else if (wasCity && !nowCity)
+        {
+            Log.d("RadarDiag", "CITY PAUSE: resumed (zone="
+                    + ZoneState.zoneId + " name=" + ZoneState.zoneName + ")");
+        }
     }
 
     /**

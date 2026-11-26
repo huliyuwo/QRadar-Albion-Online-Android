@@ -4,7 +4,9 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.preference.PreferenceManager;
 
+import com.minhui.networkcapture.MyApplication;
 import com.minhui.vpn.Handlers.HandlerItem.HarvestableType;
+import com.minhui.vpn.zone.ZoneState;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -96,6 +98,11 @@ public class RadarSettings
     public boolean radarShowHud = true;
     public boolean radarShowRings = true;
     public boolean radarShowBackground = true;
+    /**
+     * 主城暂停模式（0=关闭 / 1=完全不解析+不渲染（默认）/ 2=仅暂停渲染）。
+     * 实际读取方是 {@link com.minhui.vpn.zone.ZoneState#pauseMode}，这里只做持久化与设置页展示。
+     */
+    public int radarCityPauseMode = com.minhui.vpn.zone.ZoneState.MODE_SKIP_ALL;
 
     public HashMap<String, Boolean> chests = new HashMap<>();
     public int pvpCircleBar;
@@ -284,6 +291,13 @@ public class RadarSettings
         radarShowHud = sharedPreferences.getBoolean("radarShowHud", true);
         radarShowRings = sharedPreferences.getBoolean("radarShowRings", true);
         radarShowBackground = sharedPreferences.getBoolean("radarShowBackground", true);
+
+        // 主城暂停：0=关闭 / 1=完全不解析不渲染（默认）/ 2=只暂停渲染。
+        // 解析线程与渲染线程都直接读 ZoneState 的静态字段，这里把持久化的值同步进去。
+        radarCityPauseMode = sharedPreferences.getInt(MyApplication.PREF_CITY_PAUSE_MODE,
+                ZoneState.MODE_SKIP_ALL);
+        ZoneState.init(context);
+        ZoneState.pauseMode = radarCityPauseMode;
 
         // 资源等级矩阵：旧版本没有矩阵 key，用旧的全局等级/附魔开关作为默认值，保证升级后行为不变
         for (String kind : RESOURCE_KIND_KEYS)

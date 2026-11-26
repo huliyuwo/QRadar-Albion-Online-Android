@@ -20,6 +20,7 @@ import com.minhui.vpn.Handlers.HandlerItem.Player;
 import com.minhui.vpn.Handlers.MainHandler;
 import com.minhui.vpn.PhotonPackageParser.Utils;
 import com.minhui.vpn.PhotonPackageParser.enumerations.MobCodes;
+import com.minhui.vpn.zone.ZoneState;
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
@@ -142,6 +143,8 @@ public class RadarView extends View
     private long lastDiagLogTime;
     private long lastTrimTime;
     private long lastDrawnLogTime;
+    /** 主城暂停时“render skipped”日志限流。 */
+    private long lastCityPauseLogTime;
     private long fpsWindowStart;
     private int frameCount;
     private int lastDrawnHarvest;
@@ -713,6 +716,14 @@ public class RadarView extends View
 
         canvas.drawRoundRect(1.5f, 1.5f, width - 1.5f, height - 1.5f, radius, radius, borderPaint);
 
+        // 主城暂停：只画背景 + 居中文案，直接 return —— 不遍历实体、不画图标/玩家/HUD。
+        // 60fps 重绘循环照旧（一帧只有一个 drawText，开销可忽略），离开主城下一帧自动恢复。
+        if (ZoneState.shouldSkipRender())
+        {
+            drawCityPauseHint(canvas, width, height);
+            return;
+        }
+
         canvas.save();
         canvas.clipRect(0, 0, width, height);
 
@@ -858,6 +869,26 @@ public class RadarView extends View
 
     private String lastFailedSection;
     private long lastFailedLogTime;
+
+    /** 主城暂停提示：背景（调用处已画）之上居中的“主城 · 雷达已暂停”，字号随视窗缩放。 */
+    private void drawCityPauseHint(Canvas canvas, int width, int height)
+    {
+        final float cx = width / 2f;
+        final float cy = height / 2f;
+
+        entityTextPaint.setColor(0xFFFFFFFF);
+        entityTextPaint.setTextSize(Math.max(12f, width * 0.072f));
+        canvas.drawText("主城 · 雷达已暂停", cx, cy, entityTextPaint);
+
+        long now = System.currentTimeMillis();
+
+        if (now - lastCityPauseLogTime >= 3000)
+        {
+            lastCityPauseLogTime = now;
+            Log.d(TAG, "CITY PAUSE: render skipped (mode=" + ZoneState.pauseMode
+                    + " zone=" + ZoneState.zoneId + " name=" + ZoneState.zoneName + ")");
+        }
+    }
 
     private void logSectionFailure(String section, Throwable e)
     {
