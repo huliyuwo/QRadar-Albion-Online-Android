@@ -10,419 +10,683 @@ import com.minhui.vpn.PhotonPackageParser.Events.NewHarvestableEvent;
 import com.minhui.vpn.PhotonPackageParser.Events.NewMobEvent;
 import com.minhui.vpn.PhotonPackageParser.Events.NewOthersEvent;
 import com.minhui.vpn.PhotonPackageParser.Events.NewPlayerEvent;
+import com.minhui.vpn.PhotonPackageParser.ProtocolCodeLookup;
 import com.minhui.vpn.PhotonPackageParser.Utils;
 import com.minhui.vpn.PhotonPackageParser.enumerations.EventCodes;
 import com.minhui.vpn.PhotonPackageParser.enumerations.OperationCodes;
 
-import org.greenrobot.eventbus.EventBus;
-
 import java.nio.ByteBuffer;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
+/**
+ * Photon UDP 数据包解析器。
+ *
+ * <p>帧结构 / 命令分发 / 分片重组对齐 PC 参考实现 {@code internal/photon/packet.go}：
+ * <ul>
+ *   <li>flags == 1 表示整包加密（需要 MITM 才能解密），直接跳过；</li>
+ *   <li>命令 8 (SendFragment) 需要按 startSequence + fragmentOffset 重组，
+ *       旧实现直接跳过，导致大包（Join 响应、批量采集物）永远收不到；</li>
+ *   <li>单条消息解析失败只丢弃该消息，不再中断同一 UDP 包里后续消息；</li>
+ *   <li>事件码 / 操作码优先取参数 252 / 253（Albion 把真实码放在参数里），
+ *       取不到时回退到消息头字节。</li>
+ * </ul>
+ */
 public class PhotonPacketParser
 {
-    NewPlayerEvent newPlayerEvent = new NewPlayerEvent();
-    NewMobEvent newMobEvent = new NewMobEvent();
-    NewHarvestableEvent newHarvestableEvent = new NewHarvestableEvent();
-    NewChestEvent newChestEvent = new NewChestEvent();
-    NewFishingZoneEvent newFishingZoneEvent = new NewFishingZoneEvent();
-    NewOthersEvent newOthersEvent = new NewOthersEvent();
-    NewAuctionEvent newAuctionEvent = new NewAuctionEvent();
+    private static final int PHOTON_HEADER_LENGTH = 12;
+    private static final int COMMAND_HEADER_LENGTH = 12;
+    private static final int FRAGMENT_HEADER_LENGTH = 20;
 
-    float [] position = new float[2];
+    private static final int CMD_DISCONNECT = 4;
+    private static final int CMD_SEND_RELIABLE = 6;
+    private static final int CMD_SEND_UNRELIABLE = 7;
+    private static final int CMD_SEND_FRAGMENT = 8;
 
-    public  void receive(ByteBuffer p)
+    private static final int MSG_REQUEST = 2;
+    private static final int MSG_RESPONSE = 3;
+    private static final int MSG_EVENT = 4;
+    private static final int MSG_RESPONSE_ALT = 7;
+    private static final int MSG_ENCRYPTED = 131;
+
+    /** 分片重组缓存上限（PC maxPendingSegments）。 */
+    private static final int MAX_PENDING_SEGMENTS = 64;
+
+    /** 与 PC maxArraySize 一致：挡住损坏长度字段导致的巨量分配。 */
+    private static final int MAX_ARRAY_SIZE = 65536;
+
+    private static final int PARAM_EVENT_CODE = 252;
+    private static final int PARAM_OPERATION_CODE = 253;
+
+    private final NewPlayerEvent newPlayerEvent = new NewPlayerEvent();
+    private final NewMobEvent newMobEvent = new NewMobEvent();
+    private final NewHarvestableEvent newHarvestableEvent = new NewHarvestableEvent();
+    private final NewChestEvent newChestEvent = new NewChestEvent();
+    private final NewFishingZoneEvent newFishingZoneEvent = new NewFishingZoneEvent();
+    private final NewOthersEvent newOthersEvent = new NewOthersEvent();
+    private final NewAuctionEvent newAuctionEvent = new NewAuctionEvent();
+
+    private final float[] position = new float[2];
+
+    /** 未完成的分片：startSequenceNumber -> 组装状态。 */
+    private final LinkedHashMap<Long, Segment> pendingSegments = new LinkedHashMap<>();
+
+    // ---------------- 统计 / 诊断 ----------------
+
+    private static int cntRequest = 0;
+    private static int cntResponse = 0;
+    private static int cntEvent = 0;
+    private static int cntError = 0;
+
+    private static int diagOps = 0;
+    private static int diagResponses = 0;
+    private static int diagMoves = 0;
+    private static int diagEventErrors = 0;
+
+    public void receive(ByteBuffer packet)
     {
+        if (packet == null || packet.remaining() < PHOTON_HEADER_LENGTH)
+        {
+            return;
+        }
+
         try
         {
-            int peerId = Short.toUnsignedInt(p.getShort());
-            int crcEnabled = Byte.toUnsignedInt(p.get());
-            int commandCount = Byte.toUnsignedInt(p.get());
-            int timestamp = p.getInt();
-            int challenge = p.getInt();
+            packet.getShort();                      // peerId
+            int flags = packet.get() & 0xFF;        // flags / crcEnabled
+            int commandCount = packet.get() & 0xFF;
+            packet.getInt();                        // timestamp
+            packet.getInt();                        // challenge
 
-            int commandHeaderLength = 12;
-            int signifierByteLength = 1;
-
-            for (int commandIdx = 0; commandIdx < commandCount; commandIdx++)
+            // 加密包无法在本地解密（XOR 位置同理），跳过即可，别让后续包解析失败
+            if (flags == 1)
             {
-                int commandType = Byte.toUnsignedInt(p.get());
-                int channelId = Byte.toUnsignedInt(p.get());
-                int commandFlags = Byte.toUnsignedInt(p.get());
-                int unkBytes = Byte.toUnsignedInt(p.get());
-                int commandLength = p.getInt();
-                int sequenceNumber = p.getInt();
+                return;
+            }
 
-                switch (commandType)
+            for (int i = 0; i < commandCount; i++)
+            {
+                if (!handleCommand(packet))
                 {
-                    case 4: // Disconnect
-                        break;
-
-                    case 7: // Send unreliable
-                        if (p.remaining() < 4)
-                        {
-                            return;
-                        }
-
-                        p.position(p.position() + 4);
-                        commandLength -= 4;
-                        // fall through
-
-                    case 6: // Send reliable
-                        p.position(p.position() + signifierByteLength);
-                        int messageType = Byte.toUnsignedInt(p.get());
-
-                        int operationLength = commandLength - commandHeaderLength - 2;
-
-                        // 命令长度来自网络数据：与缓冲区实际剩余量对不上就说明帧已经损坏，
-                        // 继续解析只会得到错位的长度字段（曾因此申请 4GB 数组把进程 OOM 掉）
-                        if (operationLength < 0 || operationLength > p.remaining())
-                        {
-                            return;
-                        }
-
-                        byte[] tempBytes = new byte[operationLength];
-                        p.get(tempBytes);
-                        ByteBuffer payload = ByteBuffer.wrap(tempBytes);
-
-                        switch (messageType)
-                        {
-                            case 2:
-                            {
-                                cntRequest++;
-                                byte operationCode = payload.get();
-                                java.util.HashMap<Object, Object> params =
-                                        Protocol18Deserializer.deserializeOperationRequest(payload);
-                                probeHandshake(params);
-                                onRequest(operationCode, params);
-                                break;
-                            }
-
-                            case 3:
-                            {
-                                cntResponse++;
-                                byte operationCode = payload.get();
-
-                                try
-                                {
-                                    onResponse(operationCode, Protocol18Deserializer.deserializeOperationResponse(payload));
-                                }
-                                catch (Exception e)
-                                {
-                                    if (cntError <= 8)
-                                    {
-                                        StringBuilder hex = new StringBuilder();
-                                        byte[] raw = tempBytes;
-
-                                        for (int i = 0; i < Math.min(40, raw.length); i++)
-                                        {
-                                            hex.append(String.format("%02x", raw[i]));
-                                        }
-
-                                        Log.d("RadarDiag", "RESP fail op=" + Byte.toUnsignedInt(operationCode)
-                                                + " len=" + raw.length + " : " + e + " hex=" + hex);
-                                    }
-
-                                    throw e;
-                                }
-
-                                break;
-                            }
-
-                            case 4:
-                            {
-                                byte eventCode = payload.get();
-                                onEvent(eventCode, Protocol18Deserializer.deserializeEventData(payload));
-
-                                if (++cntEvent % 300 == 0)
-                                {
-                                    Log.d("RadarDiag", "PKT req=" + cntRequest + " resp=" + cntResponse
-                                            + " evt=" + cntEvent + " err=" + cntError);
-                                }
-
-                                break;
-                            }
-
-                            default:
-                                byte eventCode2 =  payload.get();
-                                System.out.println("eventCode2: " + eventCode2);
-
-                                //onOther(eventCode2 , Protocol16Deserializer.deserialize(payload, 1));
-
-
-                                //onResponse(eventCode2, Protocol16Deserializer.deserializeOperationResponse(payload));
-
-                                break;
-                        }
-                        break;
-
-                    default:
-                        p.position(p.position() + commandLength - commandHeaderLength);
-                        break;
+                    break;
                 }
             }
         }
-        catch (Exception e)
+        catch (RuntimeException e)
+        {
+            cntError++;
+            logErrorRateLimited("PKT err#" + cntError + " req=" + cntRequest + " resp=" + cntResponse
+                    + " evt=" + cntEvent + " : " + e);
+        }
+    }
+
+    /** @return false 表示当前帧已损坏，停止解析该 UDP 包剩余命令。 */
+    private boolean handleCommand(ByteBuffer packet)
+    {
+        if (packet.remaining() < COMMAND_HEADER_LENGTH)
+        {
+            return false;
+        }
+
+        int commandType = packet.get() & 0xFF;
+        packet.get();                  // channelId
+        packet.get();                  // commandFlags
+        packet.get();                  // reserved
+        int commandLength = packet.getInt();
+        packet.getInt();               // reliableSequenceNumber
+
+        int payloadLength = commandLength - COMMAND_HEADER_LENGTH;
+
+        if (payloadLength < 0 || payloadLength > packet.remaining())
+        {
+            // 长度字段和实际剩余量对不上：帧已损坏，硬解会整包错位
+            return false;
+        }
+
+        switch (commandType)
+        {
+            case CMD_DISCONNECT:
+                skip(packet, payloadLength);
+                return true;
+
+            case CMD_SEND_UNRELIABLE:
+                if (payloadLength < 4)
+                {
+                    skip(packet, payloadLength);
+                    return true;
+                }
+                skip(packet, 4);       // unreliableSequenceNumber
+                return dispatchMessage(packet, payloadLength - 4);
+
+            case CMD_SEND_RELIABLE:
+                return dispatchMessage(packet, payloadLength);
+
+            case CMD_SEND_FRAGMENT:
+                return handleFragment(packet, payloadLength);
+
+            default:
+                skip(packet, payloadLength);
+                return true;
+        }
+    }
+
+    /** 一条 reliable 消息：[signalByte][messageType][payload]。 */
+    private boolean dispatchMessage(ByteBuffer packet, int length)
+    {
+        if (length < 2)
+        {
+            skip(packet, Math.max(0, length));
+            return true;
+        }
+
+        skip(packet, 1);                       // signalByte
+        int messageType = packet.get() & 0xFF;
+        int payloadLength = length - 2;
+
+        if (payloadLength < 0 || payloadLength > packet.remaining())
+        {
+            return false;
+        }
+
+        byte[] payload = new byte[payloadLength];
+        packet.get(payload);
+
+        if (messageType == MSG_ENCRYPTED)
+        {
+            return true;
+        }
+
+        dispatchPayload(messageType, payload);
+        return true;
+    }
+
+    private void dispatchPayload(int messageType, byte[] payload)
+    {
+        if (payload.length < 1)
+        {
+            return;
+        }
+
+        ByteBuffer body = ByteBuffer.wrap(payload);
+        byte code = (byte) (body.get() & 0xFF);
+
+        switch (messageType)
+        {
+            case MSG_REQUEST:
+                cntRequest++;
+                handleSafely("request", code, () ->
+                {
+                    HashMap<Object, Object> params = Protocol18Deserializer.deserializeOperationRequest(body);
+                    probeHandshake(params);
+                    onRequest(code, params);
+                });
+                break;
+
+            case MSG_RESPONSE:
+            case MSG_RESPONSE_ALT:
+                cntResponse++;
+                handleSafely("response", code, () ->
+                {
+                    HashMap<Object, Object> params = Protocol18Deserializer.deserializeOperationResponse(body);
+                    onResponse(code, params);
+                });
+                break;
+
+            case MSG_EVENT:
+                cntEvent++;
+                handleSafely("event", code, () ->
+                {
+                    HashMap<Object, Object> params = Protocol18Deserializer.deserializeEventData(body);
+                    onEvent(code, params);
+                });
+
+                if (cntEvent % 300 == 0)
+                {
+                    Log.d("RadarDiag", "PKT req=" + cntRequest + " resp=" + cntResponse
+                            + " evt=" + cntEvent + " err=" + cntError);
+                }
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    private interface MessageParser
+    {
+        void parse();
+    }
+
+    /**
+     * 单个消息级异常隔离：一条坏消息只丢自己，不中断同包内后续消息
+     * （PC 端 handleSendReliable 对每条消息独立 deserialize + 忽略错误）。
+     */
+    private void handleSafely(String kind, int code, MessageParser parser)
+    {
+        try
+        {
+            parser.parse();
+        }
+        catch (RuntimeException e)
         {
             cntError++;
 
-            if (cntError <= 6)
+            if (diagEventErrors++ < 8)
             {
-                Log.d("RadarDiag", "PKT err#" + cntError + " req=" + cntRequest + " resp=" + cntResponse
-                        + " evt=" + cntEvent + " : " + e);
+                Log.d("RadarDiag", "MSG " + kind + " code=" + code + " dropped: " + e);
             }
         }
     }
 
-    protected void onEvent(byte code , HashMap<Object, Object> Parameters)
+    // ---------------- 分片重组（PC handleSendFragment） ----------------
+
+    private boolean handleFragment(ByteBuffer packet, int length)
     {
-        // Albion 把真正的事件码放在参数 252（参考 Albion.Network 的 ParseEventCode），
-        // 消息头里那个字节只在某些情况下有意义（3 = 移动同步）。
-        int Code = Byte.toUnsignedInt(code);
-        Object wireEventCode = Parameters.get(252);
-
-        if (wireEventCode instanceof Number)
+        if (length < FRAGMENT_HEADER_LENGTH || packet.remaining() < FRAGMENT_HEADER_LENGTH)
         {
-            int eventCode = ((Number) wireEventCode).intValue();
-
-            if (eventCode > 0 && eventCode < EventCodes.values().length)
-            {
-                Code = eventCode;
-            }
+            skip(packet, Math.max(0, length));
+            return true;
         }
 
-        try
+        long startSequence = packet.getInt() & 0xFFFFFFFFL;
+        int fragmentCount = packet.getInt();
+        int fragmentNumber = packet.getInt();
+        int totalLength = packet.getInt();
+        int fragmentOffset = packet.getInt();
+
+        int fragmentLength = length - FRAGMENT_HEADER_LENGTH;
+
+        if (fragmentLength < 0 || fragmentLength > packet.remaining()
+                || totalLength < 0 || totalLength > MAX_ARRAY_SIZE * 16)
         {
-            if(Code == 3)
-            {
-                int id = Utils.getNumber(Parameters.get(0));
-                byte[] bytes = Utils.getByteArray(Parameters.get(1));
-
-                position[0]= Float.intBitsToFloat(Utils.bytesToInt(bytes, 9));
-                position[1] = Float.intBitsToFloat(Utils.bytesToInt(bytes, 13));
-
-                if (diagMoves++ < 5)
-                {
-                    StringBuilder hex = new StringBuilder();
-
-                    for (int i = 0; i < Math.min(28, bytes == null ? 0 : bytes.length); i++)
-                    {
-                        hex.append(String.format("%02x", bytes[i]));
-                    }
-
-                    Log.d("RadarDiag", "MOVE id=" + id + " len=" + (bytes == null ? -1 : bytes.length)
-                            + " pos=" + position[0] + "," + position[1] + " keys=" + Parameters.keySet()
-                            + " hex=" + hex);
-                }
-
-                newPlayerEvent.updatePlayerPosition(id, position[0], position[1]);
-                newMobEvent.updateMobPosition(id, position[0], position[1]);
-                MainHandler.getInstance().playersHandler.updateLocalPlayerPositionById(id, position[0], position[1]);
-            }
-            else
-            {
-                EventCodes eventCode = EventCodes.values()[Code];
-
-                switch (eventCode)
-                {
-                    case Leave:
-                        newPlayerEvent.removePlayer(Parameters);
-                        newMobEvent.removeMob(Parameters);
-                        newHarvestableEvent.removeHarvestable(Parameters);
-                        newFishingZoneEvent.removeFishingZoneObject(Parameters);
-                        newChestEvent.removeChest(Parameters);
-                        break;
-
-                    case NewCharacter:
-                        newPlayerEvent.NewCharacter(Parameters);
-                        break;
-
-                    case Mounted:
-                        newPlayerEvent.Mounted(Parameters);
-                        break;
-
-                    case NewMountObject:
-                        newPlayerEvent.NewMount(Parameters);
-                        break;
-
-                    case InCombatStateUpdate:
-                        newPlayerEvent.InCombatStateUpdate(Parameters);
-                        break;
-
-                    case HealthUpdate:
-                        newPlayerEvent.HealthUpdate(Parameters);
-                        break;
-
-                    case Attack:
-                        newPlayerEvent.Attack(Parameters);
-                        break;
-
-                    case NewSimpleItem:
-                    case NewEquipmentItem:
-                    case NewFurnitureItem:
-                    case NewJournalItem:
-                    case NewLaborerItem:
-                        newHarvestableEvent.NewSimpleItem(Parameters, eventCode);
-                        break;
-
-                    case UpdateMoney:
-                        newPlayerEvent.UpdateMoney(Parameters);
-                        break;
-
-                    case MobChangeState:
-                        newMobEvent.MobChangeState(Parameters);
-                        break;
-
-                    case NewMob:
-                        newMobEvent.NewMob(Parameters);
-                        break;
-
-                    case NewSimpleHarvestableObjectList:
-                        newHarvestableEvent.NewSimpleHarvestableObjectList(Parameters);
-                        break;
-
-                    case NewHarvestableObject:
-                        newHarvestableEvent.NewHarvestableObject(Parameters);
-                        break;
-
-                    case HarvestableChangeState:
-                        newHarvestableEvent.HarvestableChangeState(Parameters);
-                        break;
-
-                    case HarvestStart:
-                        newHarvestableEvent.HarvestStart(Parameters);
-                        break;
-
-                    case HarvestFinished:
-                        newHarvestableEvent.HarvestFinished(Parameters);
-                        break;
-
-                    case NewFloatObject:
-                        newHarvestableEvent.NewFloatObject(Parameters);
-                        break;
-
-                    case NewTreasureChest:
-                        newChestEvent.NewTreasureChest(Parameters);
-                        break;
-
-                    case NewFishingZoneObject:
-                        newFishingZoneEvent.NewFishingZoneObject(Parameters);
-                        break;
-
-                    case FishingStart:
-                        newFishingZoneEvent.FishingStart(Parameters);
-                        break;
-
-                    case FishingFinished:
-                        newFishingZoneEvent.FishingFinished(Parameters);
-                        break;
-
-                    case FishingCatch:
-                        newFishingZoneEvent.FishingCatch(Parameters);
-                        break;
-
-                    case FishingCast:
-                        newFishingZoneEvent.FishingCast(Parameters);
-                        break;
-
-                    case FishingMiniGame:
-                        newFishingZoneEvent.FishingMiniGame(Parameters);
-                        break;
-
-                    case InventoryPutItem:
-                        newPlayerEvent.InventoryPutItem(Parameters);
-                        break;
-
-                    case NewBuilding:
-                        newPlayerEvent.NewBuilding(Parameters);
-                        break;
-
-                    case NewLoot:
-                        newOthersEvent.NewLoot(Parameters);
-                        break;
-
-                    case NewExit:
-                        newOthersEvent.NewExit(Parameters);
-                        break;
-
-                    case NewRandomDungeonExit:
-                        newOthersEvent.NewRandomDungeonExit(Parameters);
-                        break;
-
-                    default:
-                        break;
-
-                }
-            }
-        }
-        catch (Exception ex )
-        {
-            Log.d("onEvent","Code: " + Code + " Error:" + ex.toString());
+            skip(packet, Math.max(0, fragmentLength));
+            return false;
         }
 
-        EventBus.getDefault().post("refresh");
+        Segment segment = pendingSegments.get(startSequence);
+
+        if (segment == null)
+        {
+            evictOldestSegmentIfFull();
+            segment = new Segment(totalLength);
+            pendingSegments.put(startSequence, segment);
+        }
+
+        byte[] fragment = new byte[fragmentLength];
+        packet.get(fragment);
+        segment.append(fragmentOffset, fragment);
+
+        if (segment.isComplete())
+        {
+            pendingSegments.remove(startSequence);
+
+            // 重组完成后的 payload 与 reliable 消息同格式：[signalByte][messageType][payload]
+            ByteBuffer assembled = ByteBuffer.wrap(segment.payload);
+            dispatchMessage(assembled, segment.totalLength);
+        }
+
+        return true;
     }
 
-    private static int diagOps = 0;
-
-    protected void onRequest(byte code , HashMap<Object, Object> Parameters)
+    private void evictOldestSegmentIfFull()
     {
-        // Albion 的 OperationRequest 里，消息头字节恒为 1，
-        // 真正的操作码在参数 253。
-        int Code = Byte.toUnsignedInt(code);
-        Object wireOperationCode = Parameters.get(253);
-
-        if (wireOperationCode instanceof Number)
+        if (pendingSegments.size() < MAX_PENDING_SEGMENTS)
         {
-            int operationCode = ((Number) wireOperationCode).intValue();
-
-            if (operationCode > 0 && operationCode < OperationCodes.values().length)
-            {
-                Code = operationCode;
-            }
+            return;
         }
 
-        try
+        Iterator<Map.Entry<Long, Segment>> iterator = pendingSegments.entrySet().iterator();
+
+        if (iterator.hasNext())
         {
-            OperationCodes operationCode = OperationCodes.values()[Code];
-
-            if (diagOps++ < 25)
-            {
-                Log.d("RadarDiag", "OPREQ hdr=" + Byte.toUnsignedInt(code) + " p253=" + wireOperationCode
-                        + " ->" + operationCode + " keys=" + Parameters.keySet());
-            }
-
-            switch (operationCode)
-            {
-                case Move:
-                    float[] pos = Utils.getFloats(Parameters.get(1));
-                    float angle = Utils.getFloat(Parameters.get(2));
-                    float[] targetpos = Utils.getFloats(Parameters.get(3));
-                    float speed = Utils.getFloat(Parameters.get(4));
-
-                    MainHandler.getInstance().playersHandler.updateLocalPlayerPosition(pos[0], pos[1], angle, targetpos[0], targetpos[1], speed);
-                    // 不再按 80 码裁剪：服务端只会下发视野内的实体，主动删除只会让雷达"走一路丢一路"。
-                    // 实体离开视野时服务端会发 Leave/Remove，换图时 clearAll() 也会清空。
-                    break;
-
-                case ChangeCluster :
-                    MainHandler.getInstance().clearAll();
-                    break;
-
-                case AuctionGetOffers:
-                    newAuctionEvent.AuctionGetOffersRequest(Parameters);
-                    break;
-            }
+            iterator.next();
+            iterator.remove();
         }
-        catch (Exception ex)
-        {
-            Log.d("onRequest","Code: " + Code);
-        }
-
-        EventBus.getDefault().post("refresh");
     }
 
-    private static void probeHandshake(java.util.HashMap<Object, Object> params)
+    /** 单个分片包的组装状态；重复 offset 的分片会被忽略（UDP 丢包重传）。 */
+    private static final class Segment
+    {
+        final int totalLength;
+        final byte[] payload;
+        final java.util.HashSet<Integer> seenOffsets = new java.util.HashSet<>();
+        int bytesWritten;
+
+        Segment(int totalLength)
+        {
+            this.totalLength = totalLength;
+            this.payload = new byte[totalLength];
+        }
+
+        void append(int fragmentOffset, byte[] fragment)
+        {
+            int end = fragmentOffset + fragment.length;
+
+            if (fragmentOffset < 0 || end > payload.length || seenOffsets.contains(fragmentOffset))
+            {
+                return;
+            }
+
+            System.arraycopy(fragment, 0, payload, fragmentOffset, fragment.length);
+            seenOffsets.add(fragmentOffset);
+            bytesWritten += fragment.length;
+        }
+
+        boolean isComplete()
+        {
+            return totalLength > 0 && bytesWritten >= totalLength;
+        }
+    }
+
+    private static void skip(ByteBuffer packet, int count)
+    {
+        if (count <= 0)
+        {
+            return;
+        }
+
+        int target = Math.min(packet.limit(), packet.position() + count);
+        packet.position(target);
+    }
+
+    private static void logErrorRateLimited(String message)
+    {
+        if (cntError <= 8)
+        {
+            Log.d("RadarDiag", message);
+        }
+    }
+
+    // ---------------- 消息处理 ----------------
+
+    protected void onEvent(byte headerCode, HashMap<Object, Object> parameters)
+    {
+        int code = resolveCode(headerCode, parameters, PARAM_EVENT_CODE);
+        EventCodes eventCode = ProtocolCodeLookup.event(code);
+
+        if (eventCode == null)
+        {
+            return;
+        }
+
+        if (eventCode == EventCodes.Move)
+        {
+            handleMoveEvent(parameters);
+        }
+        else
+        {
+            switch (eventCode)
+            {
+                case Leave:
+                    newPlayerEvent.removePlayer(parameters);
+                    newMobEvent.removeMob(parameters);
+                    newHarvestableEvent.removeHarvestable(parameters);
+                    newFishingZoneEvent.removeFishingZoneObject(parameters);
+                    newChestEvent.removeChest(parameters);
+                    break;
+
+                case NewCharacter:
+                    newPlayerEvent.NewCharacter(parameters);
+                    break;
+
+                case Mounted:
+                    newPlayerEvent.Mounted(parameters);
+                    break;
+
+                case NewMountObject:
+                    newPlayerEvent.NewMount(parameters);
+                    break;
+
+                case InCombatStateUpdate:
+                    newPlayerEvent.InCombatStateUpdate(parameters);
+                    break;
+
+                case HealthUpdate:
+                    newPlayerEvent.HealthUpdate(parameters);
+                    break;
+
+                case Attack:
+                    newPlayerEvent.Attack(parameters);
+                    break;
+
+                case NewSimpleItem:
+                case NewEquipmentItem:
+                case NewFurnitureItem:
+                case NewJournalItem:
+                case NewLaborerItem:
+                    newHarvestableEvent.NewSimpleItem(parameters, eventCode);
+                    break;
+
+                case UpdateMoney:
+                    newPlayerEvent.UpdateMoney(parameters);
+                    break;
+
+                case MobChangeState:
+                    newMobEvent.MobChangeState(parameters);
+                    break;
+
+                case NewMob:
+                    newMobEvent.NewMob(parameters);
+                    break;
+
+                case NewSimpleHarvestableObjectList:
+                    newHarvestableEvent.NewSimpleHarvestableObjectList(parameters);
+                    break;
+
+                case NewHarvestableObject:
+                    newHarvestableEvent.NewHarvestableObject(parameters);
+                    break;
+
+                case HarvestableChangeState:
+                    newHarvestableEvent.HarvestableChangeState(parameters);
+                    break;
+
+                case HarvestStart:
+                    newHarvestableEvent.HarvestStart(parameters);
+                    break;
+
+                case HarvestFinished:
+                    newHarvestableEvent.HarvestFinished(parameters);
+                    break;
+
+                case NewFloatObject:
+                    newHarvestableEvent.NewFloatObject(parameters);
+                    break;
+
+                case NewTreasureChest:
+                    newChestEvent.NewTreasureChest(parameters);
+                    break;
+
+                case NewFishingZoneObject:
+                    newFishingZoneEvent.NewFishingZoneObject(parameters);
+                    break;
+
+                case FishingFinished:
+                    newFishingZoneEvent.FishingFinished(parameters);
+                    break;
+
+                case NewBuilding:
+                    newPlayerEvent.NewBuilding(parameters);
+                    break;
+
+                case NewLoot:
+                    newOthersEvent.NewLoot(parameters);
+                    break;
+
+                case NewExit:
+                    newOthersEvent.NewExit(parameters);
+                    break;
+
+                case NewRandomDungeonExit:
+                    newOthersEvent.NewRandomDungeonExit(parameters);
+                    break;
+
+                default:
+                    break;
+            }
+        }
+    }
+
+    /** Move 事件：参数 1 是字节数组，坐标在 [9..13) / [13..17)（PC events.go extractMovePositions）。 */
+    private void handleMoveEvent(HashMap<Object, Object> parameters)
+    {
+        int id = Utils.getNumber(parameters.get(0));
+        byte[] bytes = Utils.getByteArray(parameters.get(1));
+
+        if (bytes == null || bytes.length < 17)
+        {
+            return;
+        }
+
+        float x = Float.intBitsToFloat(Utils.bytesToInt(bytes, 9));
+        float y = Float.intBitsToFloat(Utils.bytesToInt(bytes, 13));
+
+        if (!Float.isFinite(x) || !Float.isFinite(y))
+        {
+            // 玩家坐标是 XOR 加密的（需要 MITM 才能解码），解出来是 NaN/Inf，直接丢弃
+            return;
+        }
+
+        position[0] = x;
+        position[1] = y;
+
+        if (diagMoves++ < 5)
+        {
+            Log.d("RadarDiag", "MOVE id=" + id + " pos=" + x + "," + y + " keys=" + parameters.keySet());
+        }
+
+        newPlayerEvent.updatePlayerPosition(id, x, y);
+        newMobEvent.updateMobPosition(id, x, y);
+        MainHandler.getInstance().playersHandler.updateLocalPlayerPositionById(id, x, y);
+    }
+
+    protected void onRequest(byte headerCode, HashMap<Object, Object> parameters)
+    {
+        int code = resolveCode(headerCode, parameters, PARAM_OPERATION_CODE);
+        OperationCodes operationCode = ProtocolCodeLookup.operation(code);
+
+        if (operationCode == null)
+        {
+            return;
+        }
+
+        if (diagOps++ < 25)
+        {
+            Log.d("RadarDiag", "OPREQ hdr=" + (headerCode & 0xFF) + " p253=" + parameters.get(PARAM_OPERATION_CODE)
+                    + " ->" + operationCode + " keys=" + parameters.keySet());
+        }
+
+        switch (operationCode)
+        {
+            case Move:
+            {
+                float[] pos = Utils.getFloats(parameters.get(1));
+                float angle = Utils.getFloat(parameters.get(2));
+                float[] targetPos = Utils.getFloats(parameters.get(3));
+                float speed = Utils.getFloat(parameters.get(4));
+
+                if (pos != null && pos.length >= 2)
+                {
+                    MainHandler.getInstance().playersHandler.updateLocalPlayerPosition(
+                            pos[0], pos[1], angle,
+                            targetPos != null && targetPos.length >= 2 ? targetPos[0] : pos[0],
+                            targetPos != null && targetPos.length >= 2 ? targetPos[1] : pos[1],
+                            speed);
+                }
+                break;
+            }
+
+            case ChangeCluster:
+                MainHandler.getInstance().clearAll();
+                break;
+
+            case AuctionGetOffers:
+                newAuctionEvent.AuctionGetOffersRequest(parameters);
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    protected void onResponse(byte headerCode, HashMap<Object, Object> parameters)
+    {
+        int code = resolveCode(headerCode, parameters, PARAM_OPERATION_CODE);
+        OperationCodes operationCode = ProtocolCodeLookup.operation(code);
+
+        if (diagResponses++ < 15)
+        {
+            Log.d("RadarDiag", "OPRESP hdr=" + (headerCode & 0xFF) + " p253=" + parameters.get(PARAM_OPERATION_CODE)
+                    + " ->" + (operationCode == null ? "null" : operationCode)
+                    + " size=" + parameters.size() + " keys=" + parameters.keySet());
+        }
+
+        // Join 响应按 shape 兜底：参数表里同时有 0/2/8 且数量很大，就是 Join。
+        // 解析修好后正常走 opcode 分支，这里只防"操作码参数缺失"的极端情况。
+        if (operationCode != OperationCodes.Join && looksLikeJoinResponse(parameters))
+        {
+            Log.d("RadarDiag", "JOIN by shape: size=" + parameters.size() + " p253=" + parameters.get(PARAM_OPERATION_CODE));
+            newPlayerEvent.updateLocalPlayer(parameters);
+            return;
+        }
+
+        if (operationCode == null)
+        {
+            return;
+        }
+
+        switch (operationCode)
+        {
+            case Join:
+                newPlayerEvent.updateLocalPlayer(parameters);
+                break;
+
+            case ChangeCluster:
+                // 参考 PC：换图响应到达时清空上一张图的实体
+                MainHandler.getInstance().clearAll();
+                break;
+
+            case AuctionGetOffers:
+                newAuctionEvent.AuctionGetOffersResponse(parameters);
+                break;
+
+            default:
+                break;
+        }
+    }
+
+    private static boolean looksLikeJoinResponse(HashMap<Object, Object> parameters)
+    {
+        return parameters.size() > 40
+                && parameters.containsKey(0)
+                && parameters.containsKey(2)
+                && parameters.containsKey(8);
+    }
+
+    /**
+     * 真实事件码 / 操作码在参数 252 / 253；取不到时回退消息头字节。
+     */
+    private static int resolveCode(byte headerCode, HashMap<Object, Object> parameters, int paramId)
+    {
+        int header = headerCode & 0xFF;
+        Object wireCode = parameters == null ? null : parameters.get(paramId);
+
+        if (wireCode instanceof Number)
+        {
+            int value = ((Number) wireCode).intValue();
+
+            if (value >= 0)
+            {
+                return value;
+            }
+        }
+
+        return header;
+    }
+
+    private static void probeHandshake(HashMap<Object, Object> params)
     {
         if (params == null || params.isEmpty())
         {
@@ -442,78 +706,5 @@ public class PhotonPacketParser
                 }
             }
         }
-    }
-
-    private static int diagResponses = 0;
-
-    private static int diagMoves = 0;
-
-    private static int cntRequest = 0;
-    private static int cntResponse = 0;
-    private static int cntEvent = 0;
-    private static int cntError = 0;
-
-    protected void onResponse(byte code , HashMap<Object, Object> Parameters)
-    {
-        int Code = Byte.toUnsignedInt(code);
-        Object wireOperationCode = Parameters.get(253);
-
-        if (wireOperationCode instanceof Number)
-        {
-            int operationCode = ((Number) wireOperationCode).intValue();
-
-            if (operationCode > 0 && operationCode < OperationCodes.values().length)
-            {
-                Code = operationCode;
-            }
-        }
-
-        try
-        {
-            OperationCodes operationCode = OperationCodes.values()[Code];
-
-            if (diagResponses++ < 15)
-            {
-                Log.d("RadarDiag", "OPRESP hdr=" + Byte.toUnsignedInt(code) + " p253=" + wireOperationCode
-                        + " ->" + operationCode + " size=" + Parameters.size() + " keys=" + Parameters.keySet());
-            }
-
-            // Join 响应在 1.32 里不一定带 253，只靠操作码分派会漏掉，导致本地玩家 id 一直是 0
-            if (Parameters.size() > 40 && Parameters.containsKey(0) && Parameters.containsKey(2)
-                    && Parameters.containsKey(8))
-            {
-                Log.d("RadarDiag", "JOIN by shape: size=" + Parameters.size() + " p253=" + wireOperationCode);
-                newPlayerEvent.updateLocalPlayer(Parameters);
-                MainHandler.getInstance().playersHandler.localPlayerId();
-            }
-
-            switch (operationCode)
-            {
-                case Join:
-                    newPlayerEvent.updateLocalPlayer(Parameters);
-                    break;
-
-                case AuctionGetOffers:
-                    newAuctionEvent.AuctionGetOffersResponse(Parameters);
-                    break;
-
-                default:
-                    //Log.d("onResponse operationCode","Code: " + operationCode);
-
-                    break;
-            }
-        }
-        catch (Exception ex)
-        {
-            Log.d("onResponse","Code: " + Code);
-        }
-
-        EventBus.getDefault().post("refresh");
-    }
-
-    protected void onOther(byte code , HashMap<Object, Object> Parameters)
-    {
-        short Code = (short)Parameters.get(253);
-
     }
 }

@@ -1,54 +1,61 @@
 package com.minhui.vpn.PhotonPackageParser.classes;
 
-import android.util.Log;
-
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 
 /**
  * Photon Protocol 18 参数解码器。
  *
- * 当前版本的游戏（1.32）UDP 5056 用的是 Protocol18 参数编码：
- * 参数头是 [ID 1B][Type 1B]，值按类型变长编码（Varint / ZigZag / 小端定长），
- * 数组长度、字符串长度都是 Varint；而项目原来的 Protocol16Deserializer 只认 V16 的
- * 单字节类型码（0x2A/0x62/0x73…），遇到 V18 的 0x11(Long16Positive)、0x43(ByteArray)
- * 这类类型码时要么解成 null、要么整包错位，Handler 永远拿不到数据，雷达也就没有东西可画。
+ * <p>1:1 移植自 PC 参考实现 {@code Albion-Online-OpenRadar/internal/photon/}：
+ * <ul>
+ *   <li>{@code typecodes.go} 类型码表</li>
+ *   <li>{@code deserializer.go} 反序列化（含 custom/slim custom、typed array、dictionary/hashtable）</li>
+ *   <li>{@code readers.go} varint / zigzag / 小端定长读取</li>
+ * </ul>
  *
- * 参考实现：github.com/AutoDruid/photon-parser 的 internal/parameters/v18
+ * <p>关键点（旧实现缺失，导致 Join 响应报 "Protocol18 unsupported type 211/83" 并中断解析）：
+ * <ol>
+ *   <li>Custom 类型：type 19 先读一个 customTypeID 字节，再读 varint 长度 + 数据；
+ *       type &gt;= 0x80 是 slim custom，直接读 varint 长度 + 数据。旧实现把 211(0xD3)/83(0x53)
+ *       当成未知类型抛异常。</li>
+ *   <li>OperationResponse 的 debug 槽是"带类型码的值"（通常是 String 或 String[]，
+ *       也见过 null），旧实现把它当成 varint 长度直接 skip，整体错位后才出现莫名的
+ *       未知类型字节。</li>
+ *   <li>参数表条数、集合长度都是 LEB128 varint，不是单字节（条数 &gt;= 128 时必须多字节）。</li>
+ *   <li>0x40 是"嵌套数组"(count + 元素类型 + N 个值)，0x42..0x4A 才是 typed array。</li>
+ * </ol>
  */
-public class Protocol18Deserializer
+public final class Protocol18Deserializer
 {
-    private static final String TAG = "Protocol18";
-
-    private static final int MAX_COLLECTION_SIZE = 100_000;
-
-    // Protocol18 类型码
+    // ---- Protocol18 类型码（internal/photon/typecodes.go） ----
     private static final int T_UNKNOWN = 0;
     private static final int T_BOOLEAN = 2;
-    private static final int T_INT8 = 3;
-    private static final int T_INT16 = 4;
-    private static final int T_FLOAT32 = 5;
-    private static final int T_FLOAT64 = 6;
+    private static final int T_BYTE = 3;
+    private static final int T_SHORT = 4;
+    private static final int T_FLOAT = 5;
+    private static final int T_DOUBLE = 6;
     private static final int T_STRING = 7;
-    private static final int T_NIL = 8;
-    private static final int T_COMPRESSED_INT32 = 9;
-    private static final int T_COMPRESSED_INT64 = 10;
-    private static final int T_INT8_POSITIVE = 11;
-    private static final int T_INT8_NEGATIVE = 12;
-    private static final int T_INT16_POSITIVE = 13;
-    private static final int T_INT16_NEGATIVE = 14;
-    private static final int T_LONG8_POSITIVE = 15;
-    private static final int T_LONG8_NEGATIVE = 16;
-    private static final int T_LONG16_POSITIVE = 17;
-    private static final int T_LONG16_NEGATIVE = 18;
+    private static final int T_NULL = 8;
+    private static final int T_COMPRESSED_INT = 9;
+    private static final int T_COMPRESSED_LONG = 10;
+    private static final int T_INT1 = 11;
+    private static final int T_INT1_NEG = 12;
+    private static final int T_INT2 = 13;
+    private static final int T_INT2_NEG = 14;
+    private static final int T_LONG1 = 15;
+    private static final int T_LONG1_NEG = 16;
+    private static final int T_LONG2 = 17;
+    private static final int T_LONG2_NEG = 18;
     private static final int T_CUSTOM = 19;
     private static final int T_DICTIONARY = 20;
     private static final int T_HASHTABLE = 21;
     private static final int T_OBJECT_ARRAY = 23;
-    private static final int T_BOOLEAN_FALSE = 27;
-    private static final int T_BOOLEAN_TRUE = 28;
+    private static final int T_OPERATION_REQUEST = 24;
+    private static final int T_OPERATION_RESPONSE = 25;
+    private static final int T_EVENT_DATA = 26;
+    private static final int T_BOOL_FALSE = 27;
+    private static final int T_BOOL_TRUE = 28;
     private static final int T_SHORT_ZERO = 29;
     private static final int T_INT_ZERO = 30;
     private static final int T_LONG_ZERO = 31;
@@ -56,174 +63,181 @@ public class Protocol18Deserializer
     private static final int T_DOUBLE_ZERO = 33;
     private static final int T_BYTE_ZERO = 34;
     private static final int T_ARRAY = 0x40;
-    private static final int T_BOOLEAN_ARRAY = 0x42;
-    private static final int T_BYTE_ARRAY = 0x43;
-    private static final int T_SHORT_ARRAY = 0x44;
-    private static final int T_FLOAT32_ARRAY = 0x45;
-    private static final int T_FLOAT64_ARRAY = 0x46;
-    private static final int T_STRING_ARRAY = 0x47;
-    private static final int T_COMPRESSED_INT_ARRAY = 0x49;
-    private static final int T_COMPRESSED_LONG_ARRAY = 0x4A;
+    private static final int T_SLIM_CUSTOM_BASE = 0x80;
+
+    /** 与 PC maxArraySize 一致：挡住损坏长度字段导致的巨量分配。 */
+    private static final int MAX_ARRAY_SIZE = 65536;
 
     private Protocol18Deserializer()
     {
     }
 
-    /** 事件数据：只有参数表（eventCode 已由调用方读掉）。 */
+    /** 事件数据：只剩参数表（事件码已由调用方读走）。 */
     public static HashMap<Object, Object> deserializeEventData(ByteBuffer input)
     {
         return readParameterTable(input);
     }
 
-    /** 操作请求：只有参数表（operationCode 已由调用方读掉）。 */
+    /** 操作请求：只剩参数表（操作码已由调用方读走）。 */
     public static HashMap<Object, Object> deserializeOperationRequest(ByteBuffer input)
     {
         return readParameterTable(input);
     }
 
-    /** 操作响应：操作码已读掉，其后是 returnCode(int16 LE) + 可选 debug 字符串 + 参数表。 */
+    /**
+     * 操作响应：操作码已由调用方读走，其后是 returnCode(int16 LE)
+     * + debug 槽（带类型码的值）+ 参数表。
+     *
+     * <p>Albion 会在市场订单响应的 debug 槽里塞一个 string[]，PC 端把它落到
+     * parameters[0] 供下游 handler 使用，这里保持一致。
+     */
     public static HashMap<Object, Object> deserializeOperationResponse(ByteBuffer input)
     {
-        int start = input.position();
+        delimit(input, 3, "operation response");
+        readInt16(input);
 
-        // 变体 A：returnCode + debug 字符串(varint 长度) + 参数表
-        try
+        Object[] marketOrders = null;
+
+        if (input.hasRemaining())
         {
-            HashMap<Object, Object> table = readResponseWithDebug(input);
+            int debugType = readByte(input);
+            Object debugValue = deserialize(input, debugType);
 
-            if (input.remaining() == 0)
+            if (debugValue instanceof Object[])
             {
-                return table;
+                marketOrders = (Object[]) debugValue;
             }
         }
-        catch (Exception ignored)
+
+        HashMap<Object, Object> params = readParameterTable(input);
+
+        if (marketOrders != null)
         {
+            params.put(0, marketOrders);
         }
 
-        // 变体 B：没有 debug 字符串，returnCode 后直接是参数表
-        input.position(start);
-
-        try
-        {
-            HashMap<Object, Object> table = readResponseWithoutDebug(input);
-
-            if (input.remaining() == 0)
-            {
-                return table;
-            }
-        }
-        catch (Exception ignored)
-        {
-        }
-
-        // 兜底：两种都不干净时，用"有 debug"的解析结果（至少能把大部分响应解出来）
-        input.position(start);
-        return readResponseWithDebug(input);
-    }
-
-    private static HashMap<Object, Object> readResponseWithDebug(ByteBuffer input)
-    {
-        readInt16LE(input);
-        int debugLength = (int) readVarint(input);
-        skip(input, debugLength);
-
-        return readParameterTable(input);
-    }
-
-    private static HashMap<Object, Object> readResponseWithoutDebug(ByteBuffer input)
-    {
-        readInt16LE(input);
-
-        return readParameterTable(input);
+        return params;
     }
 
     private static HashMap<Object, Object> readParameterTable(ByteBuffer input)
     {
-        int count = input.get() & 0xFF;
         HashMap<Object, Object> table = new HashMap<>();
 
-        for (int i = 0; i < count; i++)
+        int count = (int) readVarint(input);
+
+        if (count < 0 || count > MAX_ARRAY_SIZE || count > input.remaining())
         {
-            int id = input.get() & 0xFF;
-            int type = input.get() & 0xFF;
-            table.put(id, readValue(input, type));
+            return table;
+        }
+
+        for (int i = 0; i < count && input.hasRemaining(); i++)
+        {
+            try
+            {
+                int id = readByte(input);
+
+                if (!input.hasRemaining())
+                {
+                    break;
+                }
+
+                int type = readByte(input);
+                table.put(id, deserialize(input, type));
+            }
+            catch (RuntimeException truncated)
+            {
+                // 参考 PC readParameterTable：截断时返回已解析的部分，不丢弃整包。
+                break;
+            }
         }
 
         return table;
     }
 
-    private static Object readValue(ByteBuffer input, int type)
+    private static Object deserialize(ByteBuffer input, int type)
     {
+        if (type >= T_SLIM_CUSTOM_BASE)
+        {
+            return readByteArrayPayload(input, false);
+        }
+
         switch (type)
         {
             case T_UNKNOWN:
-            case T_NIL:
+            case T_NULL:
                 return null;
 
             case T_BOOLEAN:
-                return input.get() != 0;
+                return readByte(input) != 0;
 
-            case T_INT8:
-                return (int) (input.get() & 0xFF);
+            case T_BYTE:
+                return readByte(input);
 
-            case T_INT16:
-                return (int) readInt16LE(input);
+            case T_SHORT:
+                return (int) readInt16(input);
 
-            case T_FLOAT32:
-                return readFloat32LE(input);
+            case T_FLOAT:
+                return readFloat32(input);
 
-            case T_FLOAT64:
-                return (float) readFloat64LE(input);
+            case T_DOUBLE:
+                return (float) readFloat64(input);
 
             case T_STRING:
-            {
-                int length = (int) readVarint(input);
-                return readString(input, length);
-            }
+                return readString(input);
 
-            case T_COMPRESSED_INT32:
+            case T_COMPRESSED_INT:
                 return (int) readZigZagVarint(input);
 
-            case T_COMPRESSED_INT64:
+            case T_COMPRESSED_LONG:
                 return readZigZagVarint(input);
 
-            case T_INT8_POSITIVE:
-                return (int) (input.get() & 0xFF);
+            case T_INT1:
+                return readByte(input);
 
-            case T_INT8_NEGATIVE:
-                return -(int) (input.get() & 0xFF);
+            case T_INT1_NEG:
+                return -readByte(input);
 
-            case T_INT16_POSITIVE:
-                return (int) readInt16LE(input);
+            case T_INT2:
+                return (int) readUInt16(input);
 
-            case T_INT16_NEGATIVE:
-                return -(int) readInt16LE(input);
+            case T_INT2_NEG:
+                return -(int) readUInt16(input);
 
-            case T_LONG8_POSITIVE:
-                return (long) (input.get() & 0xFF);
+            case T_LONG1:
+                return (long) readByte(input);
 
-            case T_LONG8_NEGATIVE:
-                return -(long) (input.get() & 0xFF);
+            case T_LONG1_NEG:
+                return -(long) readByte(input);
 
-            case T_LONG16_POSITIVE:
-                return (long) readInt16LE(input);
+            case T_LONG2:
+                return (long) readUInt16(input);
 
-            case T_LONG16_NEGATIVE:
-                return -(long) readInt16LE(input);
+            case T_LONG2_NEG:
+                return -(long) readUInt16(input);
+
+            case T_CUSTOM:
+                return readByteArrayPayload(input, true);
 
             case T_DICTIONARY:
-                return readDictionary(input);
-
             case T_HASHTABLE:
-                return readHashtable(input);
+                return readDictionary(input);
 
             case T_OBJECT_ARRAY:
                 return readObjectArray(input);
 
-            case T_BOOLEAN_FALSE:
+            case T_OPERATION_REQUEST:
+                return readOperationRequestInner(input);
+
+            case T_OPERATION_RESPONSE:
+                return readOperationResponseInner(input);
+
+            case T_EVENT_DATA:
+                return readEventDataInner(input);
+
+            case T_BOOL_FALSE:
                 return Boolean.FALSE;
 
-            case T_BOOLEAN_TRUE:
+            case T_BOOL_TRUE:
                 return Boolean.TRUE;
 
             case T_SHORT_ZERO:
@@ -239,73 +253,96 @@ public class Protocol18Deserializer
                 return 0f;
 
             case T_ARRAY:
-                return readObjectArray(input);
+                return readNestedArray(input);
 
-            case T_BOOLEAN_ARRAY:
-                return readBooleanArray(input);
-
-            case T_BYTE_ARRAY:
-                return readByteArray(input);
-
-            case T_SHORT_ARRAY:
-                return readShortArray(input);
-
-            case T_FLOAT32_ARRAY:
-                return readFloat32Array(input);
-
-            case T_FLOAT64_ARRAY:
-                return readFloat64Array(input);
-
-            case T_STRING_ARRAY:
-                return readStringArray(input);
-
-            case T_COMPRESSED_INT_ARRAY:
-                return readCompressedIntArray(input);
-
-            case T_COMPRESSED_LONG_ARRAY:
-                return readCompressedLongArray(input);
-
-            case T_CUSTOM:
             default:
-                // 未知/自定义类型：无法确定长度，只能放弃这个包
+                if ((type & T_ARRAY) == T_ARRAY)
+                {
+                    return readTypedArray(input, type & ~T_ARRAY);
+                }
+
+                // 未知类型无法判断长度，继续解析只会整体错位：
+                // 抛出去由 PhotonPacketParser 丢弃这一条消息，后续消息不受影响。
                 throw new IllegalArgumentException("Protocol18 unsupported type " + type);
         }
     }
 
-    private static HashMap<Object, Object> readDictionary(ByteBuffer input)
+    // ---------------- 复合类型 ----------------
+
+    /**
+     * Custom 字节数组。type 19 时 gpType &lt; 0x80 需要先读一个 customTypeID 字节；
+     * slim custom（type &gt;= 0x80）没有这个字节。
+     */
+    private static byte[] readByteArrayPayload(ByteBuffer input, boolean withTypeId)
     {
-        int keyType = input.get() & 0xFF;
-        int valueType = input.get() & 0xFF;
-        int count = (int) readVarint(input);
-        checkCount(count, 2);
-
-        HashMap<Object, Object> map = new HashMap<>(Math.min(count, 1024));
-
-        for (int i = 0; i < count; i++)
+        if (withTypeId)
         {
-            Object key = readValue(input, keyType);
-            Object value = readValue(input, valueType);
-            map.put(key, value);
+            readByte(input);
         }
 
-        return map;
+        int size = (int) readVarint(input);
+
+        if (size < 0 || size > MAX_ARRAY_SIZE || size > input.remaining())
+        {
+            return null;
+        }
+
+        byte[] data = new byte[size];
+        input.get(data);
+        return data;
     }
 
-    /** Hashtable：count(varint) + 每项 [keyType][key][valueType][value]。 */
-    private static HashMap<Object, Object> readHashtable(ByteBuffer input)
+    /**
+     * Dictionary / Hashtable：keyType、valueType、count，然后逐项 key/value。
+     * 类型码为 0 时表示每一项自带类型码（PC deserializeDictionary）。
+     */
+    private static HashMap<Object, Object> readDictionary(ByteBuffer input)
     {
+        int keyType = readByte(input);
+        int valueType = readByte(input);
         int count = (int) readVarint(input);
-        checkCount(count, 4);
 
-        HashMap<Object, Object> map = new HashMap<>(Math.min(count, 1024));
+        HashMap<Object, Object> map = new HashMap<>();
 
-        for (int i = 0; i < count; i++)
+        if (count < 0 || count > MAX_ARRAY_SIZE || count > input.remaining())
         {
-            int keyType = input.get() & 0xFF;
-            Object key = readValue(input, keyType);
-            int valueType = input.get() & 0xFF;
-            Object value = readValue(input, valueType);
-            map.put(key, value);
+            return map;
+        }
+
+        for (int i = 0; i < count && input.hasRemaining(); i++)
+        {
+            try
+            {
+                int kt = keyType;
+
+                if (kt == 0)
+                {
+                    kt = readByte(input);
+                }
+
+                int vt = valueType;
+
+                if (vt == 0)
+                {
+                    vt = readByte(input);
+                }
+
+                Object key = deserialize(input, kt);
+                Object value = deserialize(input, vt);
+
+                if (isComparableKey(key))
+                {
+                    map.put(key, value);
+                }
+                else
+                {
+                    map.put("UNHASHABLE_" + i + "_" + (key == null ? "null" : key.getClass().getSimpleName()), value);
+                }
+            }
+            catch (RuntimeException truncated)
+            {
+                break;
+            }
         }
 
         return map;
@@ -313,183 +350,291 @@ public class Protocol18Deserializer
 
     private static Object[] readObjectArray(ByteBuffer input)
     {
-        int count = (int) readVarint(input);
-        checkCount(count, 2);
+        int size = (int) readVarint(input);
 
-        Object[] result = new Object[count];
-
-        for (int i = 0; i < count; i++)
+        if (size < 0 || size > MAX_ARRAY_SIZE || size > input.remaining())
         {
-            int type = input.get() & 0xFF;
-            result[i] = readValue(input, type);
+            return null;
+        }
+
+        Object[] result = new Object[size];
+
+        for (int i = 0; i < size && input.hasRemaining(); i++)
+        {
+            int type = readByte(input);
+            result[i] = deserialize(input, type);
         }
 
         return result;
     }
 
-    private static byte[] readByteArray(ByteBuffer input)
+    /** 0x40：count + 统一元素类型 + N 个值。 */
+    private static Object[] readNestedArray(ByteBuffer input)
     {
-        int count = (int) readVarint(input);
-        checkCount(count, 1);
+        int size = (int) readVarint(input);
 
-        byte[] bytes = new byte[count];
-        input.get(bytes);
-        return bytes;
-    }
-
-    private static boolean[] readBooleanArray(ByteBuffer input)
-    {
-        int count = (int) readVarint(input);
-        checkCount(count, 1);
-
-        int packedLength = (count + 7) / 8;
-        checkRemaining(input, packedLength);
-
-        boolean[] result = new boolean[count];
-        byte[] packed = new byte[packedLength];
-        input.get(packed);
-
-        for (int i = 0; i < count; i++)
+        if (size < 0 || size > MAX_ARRAY_SIZE || size > input.remaining())
         {
-            result[i] = (packed[i >> 3] & (1 << (i & 7))) != 0;
+            return null;
+        }
+
+        int elementType = readByte(input);
+        Object[] result = new Object[size];
+
+        for (int i = 0; i < size && input.hasRemaining(); i++)
+        {
+            result[i] = deserialize(input, elementType);
         }
 
         return result;
     }
 
-    private static short[] readShortArray(ByteBuffer input)
+    /** 0x41..0x7F：typed array，元素类型 = type &amp; ~0x40。 */
+    private static Object readTypedArray(ByteBuffer input, int elementType)
     {
-        int count = (int) readVarint(input);
-        checkCount(count, 2);
+        int size = (int) readVarint(input);
 
-        short[] result = new short[count];
-
-        for (int i = 0; i < count; i++)
+        if (size < 0 || size > MAX_ARRAY_SIZE)
         {
-            result[i] = (short) readInt16LE(input);
+            return null;
         }
 
-        return result;
-    }
-
-    private static Object[] readFloat32Array(ByteBuffer input)
-    {
-        int count = (int) readVarint(input);
-        checkCount(count, 4);
-
-        Object[] result = new Object[count];
-
-        for (int i = 0; i < count; i++)
+        switch (elementType)
         {
-            result[i] = readFloat32LE(input);
-        }
-
-        return result;
-    }
-
-    private static Object[] readFloat64Array(ByteBuffer input)
-    {
-        int count = (int) readVarint(input);
-        checkCount(count, 8);
-
-        Object[] result = new Object[count];
-
-        for (int i = 0; i < count; i++)
-        {
-            result[i] = (float) readFloat64LE(input);
-        }
-
-        return result;
-    }
-
-    private static String[] readStringArray(ByteBuffer input)
-    {
-        int count = (int) readVarint(input);
-        checkCount(count, 1);
-
-        String[] result = new String[count];
-
-        for (int i = 0; i < count; i++)
-        {
-            int length = (int) readVarint(input);
-            result[i] = readString(input, length);
-        }
-
-        return result;
-    }
-
-    private static int[] readCompressedIntArray(ByteBuffer input)
-    {
-        int count = (int) readVarint(input);
-        checkCount(count, 1);
-
-        int[] result = new int[count];
-
-        for (int i = 0; i < count; i++)
-        {
-            result[i] = (int) readZigZagVarint(input);
-        }
-
-        return result;
-    }
-
-    private static long[] readCompressedLongArray(ByteBuffer input)
-    {
-        int count = (int) readVarint(input);
-        checkCount(count, 1);
-
-        long[] result = new long[count];
-
-        for (int i = 0; i < count; i++)
-        {
-            result[i] = readZigZagVarint(input);
-        }
-
-        return result;
-    }
-
-    // ---------- 基础读取 ----------
-
-    /** 7 位一组的无符号 Varint（LEB128）。 */
-    private static long readVarint(ByteBuffer input)
-    {
-        long result = 0;
-        int shift = 0;
-
-        for (int i = 0; i < 10; i++)
-        {
-            if (!input.hasRemaining())
+            case T_BOOLEAN:
             {
-                throw new IllegalArgumentException("truncated varint");
-            }
+                boolean[] result = new boolean[size];
+                int packedLength = (size + 7) / 8;
+                byte[] packed = new byte[packedLength];
+                input.get(packed);
 
-            int b = input.get() & 0xFF;
-            result |= (long) (b & 0x7F) << shift;
+                for (int i = 0; i < size; i++)
+                {
+                    result[i] = (packed[i >> 3] & (1 << (i & 7))) != 0;
+                }
 
-            if ((b & 0x80) == 0)
-            {
                 return result;
             }
 
-            shift += 7;
+            case T_BYTE:
+            {
+                byte[] result = new byte[size];
+                input.get(result);
+                return result;
+            }
+
+            case T_SHORT:
+            {
+                short[] result = new short[size];
+
+                for (int i = 0; i < size; i++)
+                {
+                    result[i] = (short) readInt16(input);
+                }
+
+                return result;
+            }
+
+            case T_FLOAT:
+            {
+                Object[] result = new Object[size];
+
+                for (int i = 0; i < size; i++)
+                {
+                    result[i] = readFloat32(input);
+                }
+
+                return result;
+            }
+
+            case T_DOUBLE:
+            {
+                Object[] result = new Object[size];
+
+                for (int i = 0; i < size; i++)
+                {
+                    result[i] = (float) readFloat64(input);
+                }
+
+                return result;
+            }
+
+            case T_STRING:
+            {
+                String[] result = new String[size];
+
+                for (int i = 0; i < size; i++)
+                {
+                    result[i] = readString(input);
+                }
+
+                return result;
+            }
+
+            case T_COMPRESSED_INT:
+            {
+                int[] result = new int[size];
+
+                for (int i = 0; i < size; i++)
+                {
+                    result[i] = (int) readZigZagVarint(input);
+                }
+
+                return result;
+            }
+
+            case T_COMPRESSED_LONG:
+            {
+                long[] result = new long[size];
+
+                for (int i = 0; i < size; i++)
+                {
+                    result[i] = readZigZagVarint(input);
+                }
+
+                return result;
+            }
+
+            case T_DICTIONARY:
+            case T_HASHTABLE:
+            {
+                Object[] result = new Object[size];
+
+                for (int i = 0; i < size; i++)
+                {
+                    result[i] = readDictionary(input);
+                }
+
+                return result;
+            }
+
+            case T_CUSTOM:
+            {
+                // 共享一个 customTypeID：读一次，然后 N 个 (长度 + 数据)。
+                readByte(input);
+                Object[] result = new Object[size];
+
+                for (int i = 0; i < size; i++)
+                {
+                    int elementSize = (int) readVarint(input);
+
+                    if (elementSize < 0 || elementSize > MAX_ARRAY_SIZE || elementSize > input.remaining())
+                    {
+                        return null;
+                    }
+
+                    byte[] data = new byte[elementSize];
+                    input.get(data);
+                    result[i] = data;
+                }
+
+                return result;
+            }
+
+            default:
+            {
+                Object[] result = new Object[size];
+
+                for (int i = 0; i < size && input.hasRemaining(); i++)
+                {
+                    result[i] = deserialize(input, elementType);
+                }
+
+                return result;
+            }
+        }
+    }
+
+    private static HashMap<Object, Object> readOperationRequestInner(ByteBuffer input)
+    {
+        int operationCode = readByte(input);
+        HashMap<Object, Object> result = new HashMap<>();
+        result.put("operationCode", operationCode);
+        result.put("parameters", readParameterTable(input));
+        return result;
+    }
+
+    private static HashMap<Object, Object> readOperationResponseInner(ByteBuffer input)
+    {
+        int operationCode = readByte(input);
+        int returnCode = readInt16(input);
+        String debugMessage = "";
+
+        if (input.hasRemaining())
+        {
+            Object debug = deserialize(input, readByte(input));
+
+            if (debug instanceof String)
+            {
+                debugMessage = (String) debug;
+            }
         }
 
-        throw new IllegalArgumentException("varint too long");
+        HashMap<Object, Object> result = new HashMap<>();
+        result.put("operationCode", operationCode);
+        result.put("returnCode", returnCode);
+        result.put("debugMessage", debugMessage);
+        result.put("parameters", readParameterTable(input));
+        return result;
     }
 
-    private static long readZigZagVarint(ByteBuffer input)
+    private static HashMap<Object, Object> readEventDataInner(ByteBuffer input)
     {
-        long raw = readVarint(input);
-        return (raw >>> 1) ^ -(raw & 1L);
+        int code = readByte(input);
+        HashMap<Object, Object> result = new HashMap<>();
+        result.put("code", code);
+        result.put("parameters", readParameterTable(input));
+        return result;
     }
 
-    private static short readInt16LE(ByteBuffer input)
+    // ---------------- 基础读取（小端 / LEB128 / zigzag） ----------------
+
+    private static void delimit(ByteBuffer input, int required, String what)
     {
+        if (input.remaining() < required)
+        {
+            throw new IllegalArgumentException(what + " truncated: need " + required
+                    + " bytes, only " + input.remaining() + " left");
+        }
+    }
+
+    private static int readByte(ByteBuffer input)
+    {
+        if (!input.hasRemaining())
+        {
+            throw new IllegalArgumentException("Protocol18 truncated: expected byte");
+        }
+
+        return input.get() & 0xFF;
+    }
+
+    private static int readInt16(ByteBuffer input)
+    {
+        if (input.remaining() < 2)
+        {
+            throw new IllegalArgumentException("Protocol18 truncated: expected int16");
+        }
+
         return (short) ((input.get() & 0xFF) | ((input.get() & 0xFF) << 8));
     }
 
-    private static float readFloat32LE(ByteBuffer input)
+    private static int readUInt16(ByteBuffer input)
     {
+        if (input.remaining() < 2)
+        {
+            throw new IllegalArgumentException("Protocol18 truncated: expected uint16");
+        }
+
+        return (input.get() & 0xFF) | ((input.get() & 0xFF) << 8);
+    }
+
+    private static float readFloat32(ByteBuffer input)
+    {
+        if (input.remaining() < 4)
+        {
+            throw new IllegalArgumentException("Protocol18 truncated: expected float32");
+        }
+
         int bits = (input.get() & 0xFF)
                 | ((input.get() & 0xFF) << 8)
                 | ((input.get() & 0xFF) << 16)
@@ -497,8 +642,13 @@ public class Protocol18Deserializer
         return Float.intBitsToFloat(bits);
     }
 
-    private static double readFloat64LE(ByteBuffer input)
+    private static double readFloat64(ByteBuffer input)
     {
+        if (input.remaining() < 8)
+        {
+            throw new IllegalArgumentException("Protocol18 truncated: expected float64");
+        }
+
         long bits = 0;
 
         for (int i = 0; i < 8; i++)
@@ -509,41 +659,58 @@ public class Protocol18Deserializer
         return Double.longBitsToDouble(bits);
     }
 
-    private static String readString(ByteBuffer input, int length)
+    private static String readString(ByteBuffer input)
     {
-        checkRemaining(input, length);
+        int length = (int) readVarint(input);
+
+        if (length <= 0 || length > input.remaining())
+        {
+            return "";
+        }
 
         byte[] bytes = new byte[length];
         input.get(bytes);
-
         return new String(bytes, StandardCharsets.UTF_8);
     }
 
-    private static void skip(ByteBuffer input, int length)
+    /** 7 位一组的无符号 LEB128（PC readCompressedUint32）。 */
+    private static long readVarint(ByteBuffer input)
     {
-        checkRemaining(input, length);
-        input.position(input.position() + length);
+        long result = 0;
+        int shift = 0;
+
+        for (int i = 0; i < 10; i++)
+        {
+            int b = readByte(input);
+            result |= (long) (b & 0x7F) << shift;
+
+            if ((b & 0x80) == 0)
+            {
+                return result;
+            }
+
+            shift += 7;
+        }
+
+        throw new IllegalArgumentException("Protocol18 varint too long");
     }
 
-    private static void checkRemaining(ByteBuffer input, int required)
+    private static long readZigZagVarint(ByteBuffer input)
     {
-        if (required < 0 || required > input.remaining())
-        {
-            throw new IllegalArgumentException("Protocol18 truncated: need " + required
-                    + " bytes, only " + input.remaining() + " left");
-        }
+        long raw = readVarint(input);
+        return (raw >>> 1) ^ -(raw & 1L);
     }
 
-    private static void checkCount(int count, int minBytesPerItem)
+    private static boolean isComparableKey(Object key)
     {
-        if (count < 0 || count > MAX_COLLECTION_SIZE)
-        {
-            throw new IllegalArgumentException("Protocol18 bad collection size " + count);
-        }
-
-        if ((long) count * minBytesPerItem > Integer.MAX_VALUE)
-        {
-            throw new IllegalArgumentException("Protocol18 collection too large " + count);
-        }
+        return key == null
+                || key instanceof String
+                || key instanceof Integer
+                || key instanceof Long
+                || key instanceof Short
+                || key instanceof Byte
+                || key instanceof Boolean
+                || key instanceof Float
+                || key instanceof Double;
     }
 }
