@@ -37,7 +37,16 @@ public abstract class TcpTunnel implements KeyHandler
      * 而客户端（游戏）这边的 TCP 早已被本地代理"半 NAT"应答为已连接，只能干等 ——
      * 表现就是"有时候卡在连接服务器"。超时后主动 dispose，客户端立刻收到 FIN/RST 并可重试。
      */
-    private static final long CONNECT_TIMEOUT_MS = 6000;
+    private static final long CONNECT_TIMEOUT_MS = 10000;
+
+    /**
+     * 被墙/不可达目标的快速失败超时。
+     *
+     * <p>游戏启动会并发连 Google 广告/统计域名（172.217.x、142.250.x、2001:4860:: 等），
+     * 国内直连必然超时；若每个都等完整超时，启动阶段会被拖到几十秒甚至报“无法连接服务器”。
+     * 这类目标提前放弃并回 RST，让客户端立即走下一步。
+     */
+    private static final long CONNECT_TIMEOUT_BLOCKED_MS = 2500;
 
     private static final ScheduledExecutorService CONNECT_TIMEOUT_EXECUTOR =
             Executors.newSingleThreadScheduledExecutor(runnable ->
@@ -173,6 +182,44 @@ public abstract class TcpTunnel implements KeyHandler
         this.mBrotherTunnel = brotherTunnel;
     }
 
+    /** 按目标地址选择连接超时：被墙段用短超时快速失败，普通目标给足 10s。 */
+    private static long connectTimeoutFor(InetSocketAddress dest)
+    {
+        if (dest == null)
+        {
+            return CONNECT_TIMEOUT_MS;
+        }
+
+        java.net.InetAddress addr = dest.getAddress();
+
+        if (addr == null)
+        {
+            return CONNECT_TIMEOUT_MS;
+        }
+
+        byte[] raw = addr.getAddress();
+
+        if (raw != null && raw.length == 4)
+        {
+            int first = raw[0] & 0xFF;
+            int second = raw[1] & 0xFF;
+
+            // Google 系网段（ads/analytics/play services）：172.217/16、142.250/15、74.125/16、216.239.32/19、64.233.160/19、108.177/17
+            boolean google = (first == 172 && second == 217)
+                    || (first == 142 && (second == 250 || second == 251))
+                    || (first == 74 && second == 125)
+                    || (first == 216 && second == 239)
+                    || (first == 64 && second == 233)
+                    || (first == 108 && second == 177);
+
+            if (google)
+            {
+                return CONNECT_TIMEOUT_BLOCKED_MS;
+            }
+        }
+
+        return CONNECT_TIMEOUT_MS;
+    }
     public void connect(InetSocketAddress destAddress) throws Exception
     {
         if (VpnServiceHelper.protect(mInnerChannel.socket()))
