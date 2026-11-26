@@ -10,6 +10,8 @@ import java.util.HashMap;
 
 public class NewHarvestableEvent
 {
+    private static int tierDiagCount = 0;
+
     public void HarvestableChangeState(HashMap<Object, Object> parameters)
     {
         int id =  Utils.getNumber(parameters.get(0));
@@ -163,6 +165,11 @@ public class NewHarvestableEvent
             int id = a0[i];
             int type = a1[i];
             int tier = a2[i];
+
+            if (tierDiagCount++ < 40)
+            {
+                Log.d("RadarDiag", "HARV2 i=" + i + " type=" + (i < a1.length ? a1[i] : -1) + " tier=" + tier);
+            }
             float posX = a3[i * 2];
             float posY = a3[i * 2 + 1];
             int charges = a4[i];
