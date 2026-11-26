@@ -7,31 +7,34 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.ImageView;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.minhui.networkcapture.R;
-import com.minhui.networkcapture.RadarActivities.ChestsActivity;
-import com.minhui.networkcapture.RadarActivities.HarvestingActivity;
-import com.minhui.networkcapture.RadarActivities.MobsActivity;
-import com.minhui.networkcapture.RadarActivities.PvPActivity;
 import com.minhui.networkcapture.RadarActivities.RenderOptionsActivity;
 import com.minhui.networkcapture.RadarActivities.SettingsActivity;
 
 import java.util.List;
 
+/**
+ * 首页卡片入口。
+ *
+ * <p>旧版「PVP / 采集 / 怪物 / 箱子」四个零散设置入口已合并到「渲染选项」统一设置页，
+ * 首页只保留两个入口：渲染选项（雷达显示配置）与设置（mihomo/订阅/VPN/关于 + 雷达调节）。
+ */
 public class MainDashBoardAdapter extends RecyclerView.Adapter<MainDashBoardAdapter.ViewHolder>
 {
     List<String> titles;
+    List<String> subtitles;
     List<Integer> images;
     LayoutInflater inflater;
     Context mContext;
 
-    public MainDashBoardAdapter(Context ctx, List<String> titles, List<Integer> images)
+    public MainDashBoardAdapter(Context ctx, List<String> titles, List<String> subtitles, List<Integer> images)
     {
         this.titles = titles;
+        this.subtitles = subtitles;
         this.images = images;
         this.mContext = ctx;
         this.inflater = LayoutInflater.from(ctx);
@@ -50,6 +53,11 @@ public class MainDashBoardAdapter extends RecyclerView.Adapter<MainDashBoardAdap
     {
         holder.title.setText(titles.get(position));
         holder.gridIcon.setImageResource(images.get(position));
+
+        if (subtitles != null && position < subtitles.size())
+        {
+            holder.subtitle.setText(subtitles.get(position));
+        }
     }
 
     @Override
@@ -60,12 +68,14 @@ public class MainDashBoardAdapter extends RecyclerView.Adapter<MainDashBoardAdap
     public class ViewHolder extends RecyclerView.ViewHolder
     {
         TextView title;
+        TextView subtitle;
         ImageView gridIcon;
 
         public ViewHolder(@NonNull View itemView)
         {
             super(itemView);
             title = itemView.findViewById(R.id.textView2);
+            subtitle = itemView.findViewById(R.id.textSub);
             gridIcon = itemView.findViewById(R.id.imageView2);
 
             itemView.setOnClickListener(v ->
@@ -73,37 +83,17 @@ public class MainDashBoardAdapter extends RecyclerView.Adapter<MainDashBoardAdap
                 switch (getAdapterPosition())
                 {
                     case 0:
-                        // PC 式「渲染选项」统一入口
+                        // PC 式「渲染选项」统一入口：资源/敌人/玩家/箱子/雷达显示分组
                         Intent renderOptionsActivity = new Intent(mContext, RenderOptionsActivity.class);
                         mContext.startActivity(renderOptionsActivity);
                         break;
 
                     case 1:
-                        Intent playerPvPActivity = new Intent(mContext, PvPActivity.class);
-                        mContext.startActivity(playerPvPActivity);
-                        break;
-
-                    case 2:
-                        Intent playerHarvestingActivity = new Intent(mContext, HarvestingActivity.class);
-                        mContext.startActivity(playerHarvestingActivity);
-                        break;
-
-                    case 3:
-                        Intent mobsActivity = new Intent(mContext, MobsActivity.class);
-                        mContext.startActivity(mobsActivity);
-                        break;
-
-                    case 4:
-                        Intent chestsActivity = new Intent(mContext, ChestsActivity.class);
-                        mContext.startActivity(chestsActivity);
-                        break;
-
-                    case 5:
+                        // App 设置：mihomo/订阅/VPN/语言 + 雷达大小、悬浮窗位置等基础调节
                         Intent settingsActivity = new Intent(mContext, SettingsActivity.class);
                         mContext.startActivity(settingsActivity);
                         break;
                 }
-            //    Toast.makeText(v.getContext(), "Clicked -> " + getAdapterPosition(), Toast.LENGTH_SHORT).show();
             });
         }
     }

@@ -32,22 +32,7 @@
           </intent-filter>
       </activity>
 
-      <activity
-          android:name="com.minhui.networkcapture.RadarActivities.PvPActivity"
-          android:theme="@style/ToolbarTheme"/>
-
-      <activity
-          android:name="com.minhui.networkcapture.RadarActivities.HarvestingActivity"
-          android:theme="@style/ToolbarTheme"/>
-
-      <activity
-          android:name="com.minhui.networkcapture.RadarActivities.MobsActivity"
-          android:theme="@style/ToolbarTheme"/>
-
-      <activity
-          android:name="com.minhui.networkcapture.RadarActivities.ChestsActivity"
-          android:theme="@style/ToolbarTheme"
-          android:screenOrientation="fullSensor" />
+      <!-- 旧版 PVP / 采集 / 怪物 / 箱子 设置页已合并并删除，入口统一由首页「渲染选项」提供 -->
 
       <activity
           android:name="com.minhui.networkcapture.RadarActivities.SettingsActivity"

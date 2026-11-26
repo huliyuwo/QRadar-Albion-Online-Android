@@ -21,6 +21,7 @@ public class MainFragment extends Fragment
 {
     RecyclerView dataList;
     List<String> titles;
+    List<String> subtitles;
     List<Integer> images;
     MainDashBoardAdapter adapter;
 
@@ -33,24 +34,21 @@ public class MainFragment extends Fragment
         dataList = view.findViewById(R.id.dataList);
 
         titles = new ArrayList<>();
+        subtitles = new ArrayList<>();
         images = new ArrayList<>();
 
-        // 第一张卡片是 PC 式「渲染选项」统一入口（资源/敌人/玩家/箱子/雷达显示分组）
+        // 旧版 PVP / 采集 / 怪物 / 箱子 四个零散设置入口已全部合并进「渲染选项」，
+        // 首页只保留「渲染选项」（雷达显示配置）与「设置」（mihomo/订阅/VPN/关于）。
         titles.add(getString(R.string.qr_render_options));
-        titles.add(getString(R.string.qr_pvp));
-        titles.add(getString(R.string.qr_harvest_card));
-        titles.add(getString(R.string.qr_mobs));
-        titles.add(getString(R.string.qr_chests));
         titles.add(getString(R.string.qr_settings));
 
+        subtitles.add("资源 / 敌人 / 玩家 / 箱子 / 雷达显示");
+        subtitles.add("mihomo / 订阅 / 关于 / 雷达调节");
+
         images.add(R.drawable.qradarlogo);
-        images.add(R.drawable.pvp);
-        images.add(R.drawable.wheat);
-        images.add(R.drawable.devil);
-        images.add(R.drawable.treasure);
         images.add(R.drawable.setting);
 
-        adapter = new MainDashBoardAdapter(getContext(),titles,images);
+        adapter = new MainDashBoardAdapter(getContext(), titles, subtitles, images);
 
         GridLayoutManager gridLayoutManager = new GridLayoutManager(getContext(),2,GridLayoutManager.VERTICAL,false);
 

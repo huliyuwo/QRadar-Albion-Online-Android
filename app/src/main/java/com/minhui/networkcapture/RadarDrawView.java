@@ -586,6 +586,17 @@ public class RadarDrawView extends Service
         }
     }
 
+    /** 悬浮面板里的「渲染选项」跳转后收起面板（设置项已全部迁移到 RenderOptionsActivity）。 */
+    public void hideRadarSettingsPanel()
+    {
+        showRadarActivitySettings = false;
+
+        if (radarFloatingSettingsView != null)
+        {
+            radarFloatingSettingsView.setVisibility(View.GONE);
+        }
+    }
+
     /** 设置面板跟随按钮：显示在按钮正下方，越界时翻到按钮上方 */
     private void positionSettingsPanel()
     {

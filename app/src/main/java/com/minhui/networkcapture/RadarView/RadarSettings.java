@@ -192,64 +192,7 @@ public class RadarSettings
         chests.put("legendary",sharedPreferences.getBoolean("chestLegendary", false));
 
         // 先清空再按开关重建，避免 init() 被多次调用时列表重复累积
-        harvestableTypes.clear();
-
-        if(harvestingFiber)
-        {
-            updateHarvestableType(Arrays.asList(
-                    HarvestableType.FIBER,
-                    HarvestableType.FIBER_CRITTER,
-                    HarvestableType.FIBER_GUARDIAN_DEAD,
-                    HarvestableType.FIBER_GUARDIAN_RED), true);
-        }
-
-        if(harvestingRock)
-        {
-            updateHarvestableType(Arrays.asList(
-                    HarvestableType.ROCK,
-                    HarvestableType.ROCK_CRITTER_DEAD,
-                    HarvestableType.ROCK_CRITTER_GREEN,
-                    HarvestableType.ROCK_CRITTER_RED,
-                    HarvestableType.ROCK_GUARDIAN_RED), true);
-        }
-
-        if(harvestingOre)
-        {
-            updateHarvestableType(Arrays.asList(
-                    HarvestableType.ORE,
-                    HarvestableType.ORE_CRITTER_DEAD,
-                    HarvestableType.ORE_CRITTER_GREEN,
-                    HarvestableType.ORE_CRITTER_RED,
-                    HarvestableType.ORE_GUARDIAN_RED), true);
-        }
-
-        if(harvestingWood)
-        {
-            updateHarvestableType(Arrays.asList(
-                    HarvestableType.WOOD,
-                    HarvestableType.WOOD_CRITTER_DEAD,
-                    HarvestableType.WOOD_CRITTER_GREEN,
-                    HarvestableType.WOOD_CRITTER_RED,
-                    HarvestableType.WOOD_GIANTTREE,
-                    HarvestableType.WOOD_GUARDIAN_RED),true);
-        }
-
-        if(harvestingHide)
-        {
-            updateHarvestableType(Arrays.asList(
-                    HarvestableType.HIDE,
-                    HarvestableType.HIDE_FOREST,
-                    HarvestableType.HIDE_STEPPE,
-                    HarvestableType.HIDE_SWAMP,
-                    HarvestableType.HIDE_MOUNTAIN,
-                    HarvestableType.HIDE_HIGHLAND),true);
-        }
-
-        if (harvestingZoneFishing)
-        {
-            updateHarvestableType(List.of(
-                    HarvestableType.FISHING_ZONE),true);
-        }
+        rebuildHarvestableTypes();
 
         mobTiers[0] =  sharedPreferences.getBoolean("mobTier1", true);
         mobTiers[1] =  sharedPreferences.getBoolean("mobTier2", true);
@@ -283,7 +226,8 @@ public class RadarSettings
         // 雷达/显示
         radarIconScale = sharedPreferences.getFloat("radarIconScale", 1f);
         radarTierBadges = sharedPreferences.getBoolean("radarTierBadges", false);
-        radarResourceCount = sharedPreferences.getBoolean("radarResourceCount", false);
+        // 旧采集页的「Size」开关与新版「资源数量标签」是同一个效果，读取时合并成一个开关
+        radarResourceCount = sharedPreferences.getBoolean("radarResourceCount", false) || harvestingSize;
         radarResourceDistance = sharedPreferences.getBoolean("radarResourceDistance", false);
         radarClusters = sharedPreferences.getBoolean("radarClusters", false);
         radarClusterRadius = sharedPreferences.getInt("radarClusterRadius", 30);
@@ -500,7 +444,8 @@ public class RadarSettings
 
     /**
      * 静态资源是否显示。
-     * 同时兼容旧设置页的全局等级/附魔开关（AND），矩阵是新的细粒度控制。
+     * 完全由该类别自己的 T1~T8 × E0~E4 矩阵决定（旧版的全局等级/附魔开关已合并进矩阵，
+     * 否则老用户升级后矩阵里勾了也会被遗留的全局开关静默过滤掉）。
      */
     public boolean isStaticResourceEnabled(String kind, int tier, int enchant)
     {
@@ -509,16 +454,6 @@ public class RadarSettings
         if (normalized == null)
         {
             return true;
-        }
-
-        if (tier >= 1 && tier <= MATRIX_TIERS && !harvestingTiers[tier - 1])
-        {
-            return false;
-        }
-
-        if (enchant >= 0 && enchant < harvestingEnchants.length && !harvestingEnchants[enchant])
-        {
-            return false;
         }
 
         return isMatrixCellVisible(getResourceMatrix(false, normalized), tier, enchant);
@@ -699,6 +634,161 @@ public class RadarSettings
                     harvestableTypes.remove(ht);
                 }
             }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 资源类别总开关（旧采集页的 Wood/Rock/Fiber/Hide/Ore 勾选，
+    // 现在统一在「渲染选项 → 资源·类别」里控制）
+    // ------------------------------------------------------------------
+
+    /** 某类别资源（wood/rock/fiber/hide/ore）的类别总开关是否打开。 */
+    public boolean isResourceKindEnabled(String kind)
+    {
+        String normalized = normalizeKind(kind);
+
+        if (normalized == null)
+        {
+            return true;
+        }
+
+        switch (normalized)
+        {
+            case "wood":
+                return harvestingWood;
+            case "rock":
+                return harvestingRock;
+            case "fiber":
+                return harvestingFiber;
+            case "hide":
+                return harvestingHide;
+            case "ore":
+                return harvestingOre;
+            default:
+                return true;
+        }
+    }
+
+    /**
+     * 设置类别总开关：同时更新内存开关、SharedPreferences 与可采集类型列表，
+     * 渲染线程下一帧就会按新列表过滤（与旧采集页行为完全一致）。
+     */
+    public void setResourceKindEnabled(Context context, String kind, boolean enabled)
+    {
+        String normalized = normalizeKind(kind);
+
+        if (normalized == null)
+        {
+            return;
+        }
+
+        switch (normalized)
+        {
+            case "wood":
+                harvestingWood = enabled;
+                break;
+            case "rock":
+                harvestingRock = enabled;
+                break;
+            case "fiber":
+                harvestingFiber = enabled;
+                break;
+            case "hide":
+                harvestingHide = enabled;
+                break;
+            case "ore":
+                harvestingOre = enabled;
+                break;
+            default:
+                return;
+        }
+
+        rebuildHarvestableTypes();
+
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
+        preferences.edit().putBoolean(kindPrefKey(normalized), enabled).apply();
+    }
+
+    /** 按类别总开关重建 harvestableTypes（含钓鱼点）。 */
+    public void rebuildHarvestableTypes()
+    {
+        harvestableTypes.clear();
+
+        if (harvestingFiber)
+        {
+            updateHarvestableType(Arrays.asList(
+                    HarvestableType.FIBER,
+                    HarvestableType.FIBER_CRITTER,
+                    HarvestableType.FIBER_GUARDIAN_DEAD,
+                    HarvestableType.FIBER_GUARDIAN_RED), true);
+        }
+
+        if (harvestingRock)
+        {
+            updateHarvestableType(Arrays.asList(
+                    HarvestableType.ROCK,
+                    HarvestableType.ROCK_CRITTER_DEAD,
+                    HarvestableType.ROCK_CRITTER_GREEN,
+                    HarvestableType.ROCK_CRITTER_RED,
+                    HarvestableType.ROCK_GUARDIAN_RED), true);
+        }
+
+        if (harvestingOre)
+        {
+            updateHarvestableType(Arrays.asList(
+                    HarvestableType.ORE,
+                    HarvestableType.ORE_CRITTER_DEAD,
+                    HarvestableType.ORE_CRITTER_GREEN,
+                    HarvestableType.ORE_CRITTER_RED,
+                    HarvestableType.ORE_GUARDIAN_RED), true);
+        }
+
+        if (harvestingWood)
+        {
+            updateHarvestableType(Arrays.asList(
+                    HarvestableType.WOOD,
+                    HarvestableType.WOOD_CRITTER_DEAD,
+                    HarvestableType.WOOD_CRITTER_GREEN,
+                    HarvestableType.WOOD_CRITTER_RED,
+                    HarvestableType.WOOD_GIANTTREE,
+                    HarvestableType.WOOD_GUARDIAN_RED), true);
+        }
+
+        if (harvestingHide)
+        {
+            updateHarvestableType(Arrays.asList(
+                    HarvestableType.HIDE,
+                    HarvestableType.HIDE_FOREST,
+                    HarvestableType.HIDE_STEPPE,
+                    HarvestableType.HIDE_SWAMP,
+                    HarvestableType.HIDE_MOUNTAIN,
+                    HarvestableType.HIDE_HIGHLAND,
+                    HarvestableType.HIDE_HIGHLAND2,
+                    HarvestableType.HIDE_HIGHLAND3), true);
+        }
+
+        if (harvestingZoneFishing)
+        {
+            updateHarvestableType(List.of(HarvestableType.FISHING_ZONE), true);
+        }
+    }
+
+    private static String kindPrefKey(String normalizedKind)
+    {
+        switch (normalizedKind)
+        {
+            case "wood":
+                return "harvestingWood";
+            case "rock":
+                return "harvestingRock";
+            case "fiber":
+                return "harvestingFiber";
+            case "hide":
+                return "harvestingHide";
+            case "ore":
+                return "harvestingOre";
+            default:
+                return "harvestingWood";
         }
     }
 

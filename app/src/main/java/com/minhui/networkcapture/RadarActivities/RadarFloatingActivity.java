@@ -1,118 +1,86 @@
 package com.minhui.networkcapture.RadarActivities;
 
 import android.content.Context;
+import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.drawable.GradientDrawable;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.view.WindowManager;
-import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-import androidx.annotation.NonNull;
-import androidx.constraintlayout.widget.ConstraintLayout;
-import androidx.fragment.app.Fragment;
-import androidx.fragment.app.FragmentActivity;
-import androidx.viewpager2.adapter.FragmentStateAdapter;
-import androidx.viewpager2.widget.ViewPager2;
-
-import com.google.android.material.tabs.TabLayout;
-import com.google.android.material.tabs.TabLayoutMediator;
-import com.minhui.networkcapture.Fragments.ChestsFragment;
-import com.minhui.networkcapture.Fragments.HarvestingFragment;
-import com.minhui.networkcapture.Fragments.MobsFragment;
-import com.minhui.networkcapture.Fragments.PvPFragment;
 import com.minhui.networkcapture.R;
 import com.minhui.networkcapture.RadarDrawView;
 import com.minhui.networkcapture.RadarView.RadarView;
-import com.minhui.networkcapture.VPNCaptureActivity;
 
+/**
+ * 悬浮窗齿轮面板。
+ *
+ * <p>旧版这里是 PVP / 采集 / 怪物 / 箱子 四个零散设置标签（会直接在 overlay 里 inflate 旧设置页，
+ * 容易在 Service 上下文里闪退）。现在这些设置全部并入「渲染选项」统一页，悬浮面板只保留一个
+ * 入口按钮：点击后以 Activity 形式打开渲染选项页（不再在 Service 上下文里构建设置界面）。
+ */
 public class RadarFloatingActivity
 {
-    LayoutInflater layoutInflater;
-    private LinearLayout contentLayout;
-
-    private void switchContent(int layoutId)
+    public RadarFloatingActivity(View view, LayoutInflater layoutInflater, RadarView radarView,
+                                 RadarDrawView radarDrawView)
     {
+        LinearLayout contentLayout = view.findViewById(R.id.content_layout);
+
+        if (contentLayout == null)
+        {
+            return;
+        }
+
+        Context context = view.getContext();
         contentLayout.removeAllViews();
-        View contentView = layoutInflater.inflate(layoutId, contentLayout, false);
-        contentLayout.addView(contentView);
-    }
+        contentLayout.setGravity(Gravity.CENTER);
 
-    public RadarFloatingActivity(View view, LayoutInflater layoutInflater, RadarView radarView, RadarDrawView radarDrawView)
-    {
-        this.layoutInflater = layoutInflater;
+        int padding = Math.round(24 * context.getResources().getDisplayMetrics().density);
+        int paddingY = Math.round(12 * context.getResources().getDisplayMetrics().density);
+        int corner = Math.round(8 * context.getResources().getDisplayMetrics().density);
+        int hintTop = Math.round(8 * context.getResources().getDisplayMetrics().density);
 
-        TextView tab1 = view.findViewById(R.id.tab1);
-        TextView tab2 = view.findViewById(R.id.tab2);
-        TextView tab3 = view.findViewById(R.id.tab3);
-        TextView tab4 = view.findViewById(R.id.tab4);
-        TextView tab5 = view.findViewById(R.id.tab5);
-        // 设置（含 mihomo/代理操作）已移到首页"设置"入口，悬浮窗面板只保留雷达调节
-        tab5.setVisibility(View.GONE);
+        TextView openRenderOptions = new TextView(context);
+        openRenderOptions.setText("渲染选项 ▸");
+        openRenderOptions.setTextColor(Color.WHITE);
+        openRenderOptions.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        openRenderOptions.setGravity(Gravity.CENTER);
+        openRenderOptions.setPadding(padding, paddingY, padding, paddingY);
 
-        contentLayout = view.findViewById(R.id.content_layout);
+        GradientDrawable background = new GradientDrawable();
+        background.setColor(0xFFF4840B);
+        background.setCornerRadius(corner);
+        openRenderOptions.setBackground(background);
 
-        switchContent(R.layout.fragment_pv_p);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        contentLayout.addView(openRenderOptions, params);
 
-        new PvPFragment(contentLayout );
+        TextView hint = new TextView(context);
+        hint.setText("资源 / 敌人 / 玩家 / 箱子 / 雷达显示");
+        hint.setTextColor(0xFF90A4AE);
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+        hint.setGravity(Gravity.CENTER);
+        hint.setPadding(0, hintTop, 0, 0);
 
-        tab1.setBackgroundColor(view.getContext().getColor(R.color.dashboard));
-        tab2.setBackgroundColor(view.getContext().getColor(R.color.background));
-        tab3.setBackgroundColor(view.getContext().getColor(R.color.background));
-        tab4.setBackgroundColor(view.getContext().getColor(R.color.background));
-        tab5.setBackgroundColor(view.getContext().getColor(R.color.background));
+        LinearLayout.LayoutParams hintParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        contentLayout.addView(hint, hintParams);
 
-        tab1.setOnClickListener(view1 ->
+        openRenderOptions.setOnClickListener(v ->
         {
-            switchContent(R.layout.fragment_pv_p);
+            Intent intent = new Intent(context, RenderOptionsActivity.class);
+            // 从悬浮窗（Service 上下文）启动 Activity 必须带 NEW_TASK
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            context.startActivity(intent);
 
-            tab1.setBackgroundColor(view1.getContext().getColor(R.color.dashboard));
-            tab2.setBackgroundColor(view1.getContext().getColor(R.color.background));
-            tab3.setBackgroundColor(view1.getContext().getColor(R.color.background));
-            tab4.setBackgroundColor(view1.getContext().getColor(R.color.background));
-            tab5.setBackgroundColor(view1.getContext().getColor(R.color.background));
-
-            new PvPFragment(contentLayout );
-        });
-
-        tab2.setOnClickListener(view12 ->
-        {
-            switchContent(R.layout.fragment_harvesting);
-
-            tab1.setBackgroundColor(view12.getContext().getColor(R.color.background));
-            tab2.setBackgroundColor(view12.getContext().getColor(R.color.dashboard));
-            tab3.setBackgroundColor(view12.getContext().getColor(R.color.background));
-            tab4.setBackgroundColor(view12.getContext().getColor(R.color.background));
-            tab5.setBackgroundColor(view12.getContext().getColor(R.color.background));
-
-            new HarvestingFragment(contentLayout);
-        });
-
-        tab3.setOnClickListener(view13 ->
-        {
-            switchContent(R.layout.fragment_mobs);
-
-            tab1.setBackgroundColor(view13.getContext().getColor(R.color.background));
-            tab2.setBackgroundColor(view13.getContext().getColor(R.color.background));
-            tab3.setBackgroundColor(view13.getContext().getColor(R.color.dashboard));
-            tab4.setBackgroundColor(view13.getContext().getColor(R.color.background));
-            tab5.setBackgroundColor(view13.getContext().getColor(R.color.background));
-
-            new MobsFragment(contentLayout);
-        });
-
-        tab4.setOnClickListener(view14 ->
-        {
-            switchContent(R.layout.fragment_chests);
-
-            tab1.setBackgroundColor(view14.getContext().getColor(R.color.background));
-            tab2.setBackgroundColor(view14.getContext().getColor(R.color.background));
-            tab3.setBackgroundColor(view14.getContext().getColor(R.color.background));
-            tab4.setBackgroundColor(view14.getContext().getColor(R.color.dashboard));
-            tab5.setBackgroundColor(view14.getContext().getColor(R.color.background));
-
-            new ChestsFragment(contentLayout);
+            if (radarDrawView != null)
+            {
+                radarDrawView.hideRadarSettingsPanel();
+            }
         });
     }
 }

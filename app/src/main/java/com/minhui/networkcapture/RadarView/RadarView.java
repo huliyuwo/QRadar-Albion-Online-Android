@@ -1242,6 +1242,12 @@ public class RadarView extends View
             return true;
         }
 
+        // 「资源 · 类别 · 总开关」对 Static 与 Living 同时生效
+        if (!settings.isResourceKindEnabled(kind))
+        {
+            return false;
+        }
+
         return settings.isLivingResourceEnabled(kind, mob.getTier(), mob.getEnchantmentLevel());
     }
 

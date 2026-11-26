@@ -1,8 +1,11 @@
 package com.minhui.networkcapture.RadarActivities;
 
+import android.content.SharedPreferences;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.os.Bundle;
+import android.preference.PreferenceManager;
+import android.text.TextUtils;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.View;
@@ -12,9 +15,11 @@ import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.ActionBar;
+import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.content.ContextCompat;
@@ -25,26 +30,27 @@ import com.minhui.networkcapture.RadarView.RadarSettings;
 import com.minhui.vpn.zone.ZoneState;
 
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
 /**
- * 渲染选项（PC 式分组页）。
+ * 渲染选项（PC 式分组页，旧 PvP/采集/怪物/箱子 设置页的唯一入口）。
  *
- * <p>结构对齐 PC 版 OpenRadar 的设置页（{@code web/scripts/utils/SettingsRegistry.js} +
- * {@code internal/templates/pages/resources|enemies|players|radar.gohtml}）：
- * <ul>
- *   <li>雷达 / 显示：图标大小、等级角标样式、数量/距离标签、聚类（半径/最小数量）、
- *       距离环、HUD 统计、背景；</li>
- *   <li>资源：Wood/Rock/Fiber/Hide/Ore 每类折叠，下面分 Static（静态资源）与
- *       Living（活体资源怪），各自 T1~T8 × E0~E4 等级矩阵，另加 全开/全不选；</li>
- *   <li>敌人：Boss/MiniBoss/普通/无人机/迷雾/事件/守卫 + 活体资源主开关 + 等级/附魔矩阵 + 血条；</li>
- *   <li>玩家：显示、昵称、公会、联盟/阵营配色、被动/敌对、血量、距离、骑乘、最大数量、已发现面板；</li>
- *   <li>箱子：普通/优秀/稀有/传说。</li>
- * </ul>
+ * <p>页面按“使用频率 + 逻辑顺序”分组，横屏两列 / 竖屏单列，分组可折叠且折叠状态持久化：
+ * <ol>
+ *   <li>常用 / 高频：主城暂停、图标大小、视野缩放、资源等级色块角标；</li>
+ *   <li>雷达 / 显示：数量标签、距离标签、聚类（半径/最小数量）、距离环、HUD、地图背景；</li>
+ *   <li>资源：Wood / Hide / Ore / Rock / Fiber（按使用频率），每类一个类别总开关 +
+ *       Static（静态节点）与 Living（资源怪）各一套 T1~T8 × E0~E4 矩阵；</li>
+ *   <li>敌人：类别开关 → 等级/附魔矩阵 → 血条；</li>
+ *   <li>玩家：显示 / 昵称 / 公会 / 联盟阵营 / 敌对被动 / 血量距离 / 骑乘 / 最大数 / 面板；</li>
+ *   <li>箱子：普通 / 优秀 / 稀有 / 传说；</li>
+ *   <li>底部：恢复本页默认值。</li>
+ * </ol>
  *
- * <p>所有开关直接写 {@link RadarSettings} 单例（渲染线程每帧读取，雷达下一帧就变化），
- * 同时写 SharedPreferences 持久化。竖屏单列滚动，横屏两列。
+ * <p>所有开关直接写 {@link RadarSettings} 单例（渲染线程每帧读取，下一帧即生效），
+ * 同时写 SharedPreferences 持久化。竖屏单列滚动，横屏两列按分组均衡分配。
  */
 public class RenderOptionsActivity extends AppCompatActivity
 {
@@ -54,10 +60,77 @@ public class RenderOptionsActivity extends AppCompatActivity
     private static final int COLOR_SECTION_BG = 0xFF232323;
     private static final int COLOR_SECTION_HEADER = 0xFF2E2E2E;
     private static final int COLOR_DIVIDER = 0xFF3A3A3A;
+    private static final int COLOR_MATRIX_BG = 0xFF1B1B1B;
+    private static final int COLOR_MATRIX_HEADER = 0xFF303030;
+
+    /** 分组展开状态持久化前缀（记住展开/收起）。 */
+    private static final String PREF_SECTION_OPEN = "renderOptionsSectionOpen_";
+
+    /** 资源分组顺序：按实际使用频率从高到低（Wood/Hide/Ore/Rock/Fiber）。 */
+    private static final String[] RESOURCE_DISPLAY_ORDER = {"wood", "hide", "ore", "rock", "fiber"};
+
+    /** 横屏两列的分组分配（按分组分配，保证两列展开后高度基本均衡）。 */
+    /** “恢复默认”会清掉的渲染相关 SharedPreferences key（不包含订阅/mihomo/悬浮窗布局）。 */
+    private static final String[] RESET_KEYS = {
+            // 常用
+            "radarIconScale", "radarScaleBar", "radarTierBadges", MyApplication.PREF_CITY_PAUSE_MODE,
+            // 雷达 / 显示
+            "radarResourceCount", "radarResourceDistance", "radarClusters", "radarClusterRadius",
+            "radarClusterMinSize", "radarShowHud", "radarShowRings", "radarShowBackground",
+            // 资源（旧采集页遗留 key 一并清掉，避免矩阵默认值继续被旧开关过滤）
+            "harvestingSize", "harvestingZoneFishing",
+            "harvestingWood", "harvestingRock", "harvestingFiber", "harvestingHide", "harvestingOre",
+            "harvestingTier1", "harvestingTier2", "harvestingTier3", "harvestingTier4",
+            "harvestingTier5", "harvestingTier6", "harvestingTier7", "harvestingTier8",
+            "harvestingEnchant0", "harvestingEnchant1", "harvestingEnchant2",
+            "harvestingEnchant3", "harvestingEnchant4",
+            // 敌人
+            "mobHp", "mobHarvestable", "mobSkinnable", "mobOther", "mobBoss", "mobMiniBoss",
+            "mobEnemy", "mobDrone", "mobMist", "mobEvents", "mobGuard",
+            "mobTier1", "mobTier2", "mobTier3", "mobTier4",
+            "mobTier5", "mobTier6", "mobTier7", "mobTier8",
+            "mobEnchant0", "mobEnchant1", "mobEnchant2", "mobEnchant3", "mobEnchant4",
+            // 玩家
+            "playerDot", "playerNickname", "playerHealth", "playerMounted", "playerDistance",
+            "playerSound", "playerGuildName", "playerAllianceColor", "playerFactionColor",
+            "playerHostile", "playerPassive", "playerPanel", "playerMaxDisplay",
+            // 箱子
+            "chestStandard", "chestUncommon", "chestRare", "chestLegendary"
+    };
 
     private RadarSettings settings;
-    private final ArrayList<View> sectionViews = new ArrayList<>();
-    private int dp;
+    private ScrollView optionsScroll;
+    private LinearLayout optionsContainer;
+    private final ArrayList<Section> sections = new ArrayList<>();
+    private float density;
+
+    /** 一个可折叠分组。 */
+    private static final class Section
+    {
+        final String id;
+        final String title;
+        final String subtitle;
+        final boolean leftColumn;
+        final int weight;
+        final LinearLayout root;
+        final LinearLayout content;
+        final TextView arrow;
+        boolean open;
+
+        Section(String id, String title, String subtitle, boolean leftColumn, int weight,
+                LinearLayout root, LinearLayout content, TextView arrow, boolean open)
+        {
+            this.id = id;
+            this.title = title;
+            this.subtitle = subtitle;
+            this.leftColumn = leftColumn;
+            this.weight = weight;
+            this.root = root;
+            this.content = content;
+            this.arrow = arrow;
+            this.open = open;
+        }
+    }
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState)
@@ -71,7 +144,10 @@ public class RenderOptionsActivity extends AppCompatActivity
         // 与已持久化的开关对齐（渲染服务也在同一进程，改完立刻生效）
         settings.init(getApplicationContext());
 
-        dp = Math.round(getResources().getDisplayMetrics().density);
+        density = getResources().getDisplayMetrics().density;
+
+        optionsScroll = findViewById(R.id.optionsScroll);
+        optionsContainer = findViewById(R.id.optionsContainer);
 
         TextView toolbarTitle = findViewById(R.id.toolbarTitle);
         toolbarTitle.setText("渲染选项");
@@ -98,27 +174,34 @@ public class RenderOptionsActivity extends AppCompatActivity
     // ------------------------------------------------------------------
     private void buildSections()
     {
+        buildFrequentSection();
         buildRadarSection();
-        buildResourceSections();
+
+        for (String kind : RESOURCE_DISPLAY_ORDER)
+        {
+            buildResourceSection(kind);
+        }
+
+        buildResourceOtherSection();
         buildEnemySection();
         buildPlayerSection();
         buildChestSection();
+        buildResetSection();
     }
 
-    /** 竖屏单列；横屏两列（左/右交替放分组，方便横屏一次看到更多）。 */
+    /** 竖屏单列；横屏两列（按分组分配，左/右列展开后高度基本均衡）。 */
     private void layoutSections()
     {
-        LinearLayout container = findViewById(R.id.optionsContainer);
-        container.removeAllViews();
+        optionsContainer.removeAllViews();
 
         boolean twoColumn = getResources().getConfiguration().orientation
                 == android.content.res.Configuration.ORIENTATION_LANDSCAPE;
 
         if (!twoColumn)
         {
-            for (View section : sectionViews)
+            for (Section section : sections)
             {
-                addToColumn(container, section);
+                addSection(optionsContainer, section);
             }
 
             return;
@@ -139,30 +222,48 @@ public class RenderOptionsActivity extends AppCompatActivity
         right.setLayoutParams(new LinearLayout.LayoutParams(0,
                 ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
-        for (int i = 0; i < sectionViews.size(); i++)
+        for (Section section : sections)
         {
-            addToColumn(i % 2 == 0 ? left : right, sectionViews.get(i));
+            addSection(section.leftColumn ? left : right, section);
         }
 
         columns.addView(left);
         columns.addView(right);
-        container.addView(columns);
+        optionsContainer.addView(columns);
     }
 
-    private void addToColumn(LinearLayout column, View section)
+    private void addSection(LinearLayout column, Section section)
     {
+        if (section.root.getParent() instanceof ViewGroup)
+        {
+            ((ViewGroup) section.root.getParent()).removeView(section.root);
+        }
+
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        params.bottomMargin = 10 * dp;
-        column.addView(section, params);
+        params.bottomMargin = px(6);
+
+        if (column.getOrientation() == LinearLayout.HORIZONTAL)
+        {
+            // 横屏两列：左右列之间留一点间距，避免误触到隔壁分组
+            params.leftMargin = section.leftColumn ? 0 : px(5);
+            params.rightMargin = section.leftColumn ? px(5) : 0;
+        }
+
+        column.addView(section.root, params);
     }
 
     // ------------------------------------------------------------------
-    // 雷达 / 显示
+    // 1. 常用 / 高频
     // ------------------------------------------------------------------
-    private void buildRadarSection()
+    private void buildFrequentSection()
     {
-        LinearLayout content = createSection("雷达 / 显示", true);
+        // 竖屏默认展开“常用”（最高频）；横屏默认全部收起，整页像目录一样一屏看完，展开状态会被记住
+        boolean portrait = getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+
+        LinearLayout content = newSection("frequent", "常用 / 高频", "主城暂停 · 大小 / 缩放 · 等级角标",
+                portrait, true, 8);
 
         // 主城暂停（进入安全城时不解析/不渲染，离开自动恢复）
         addChoiceRow(content, "主城暂停", "进入主城/安全城时暂停雷达，离开后自动恢复",
@@ -174,6 +275,8 @@ public class RenderOptionsActivity extends AppCompatActivity
                     // 解析线程 / 渲染线程直接读 ZoneState，改完立刻生效
                     ZoneState.pauseMode = mode;
                 });
+
+        addDivider(content);
 
         addFloatSliderRow(content, "图标大小", 0.5f, 2.0f, 0.1f, settings.radarIconScale, "x", value ->
         {
@@ -187,18 +290,35 @@ public class RenderOptionsActivity extends AppCompatActivity
             RadarSettings.putFloat(this, "radarScaleBar", value);
         });
 
+        addDivider(content);
+
         addCheckRow(content, "资源等级色块角标", "用类别色块 + T等级/附魔角标代替图标（PC 的 Tier badges）",
                 settings.radarTierBadges, checked ->
                 {
                     settings.radarTierBadges = checked;
                     RadarSettings.putBoolean(this, "radarTierBadges", checked);
                 });
+    }
 
-        addCheckRow(content, "资源数量标签", "在资源下方显示节点剩余数量",
+    // ------------------------------------------------------------------
+    // 2. 雷达 / 显示
+    // ------------------------------------------------------------------
+    private void buildRadarSection()
+    {
+        boolean portrait = getResources().getConfiguration().orientation
+                == android.content.res.Configuration.ORIENTATION_PORTRAIT;
+
+        LinearLayout content = newSection("radar", "雷达 / 显示", "数量 / 距离 / 聚类 / 参考线",
+                portrait, true, 12);
+
+        addCheckRow(content, "资源数量标签", "在资源下方显示节点剩余数量（旧采集页的 Size 开关）",
                 settings.radarResourceCount, checked ->
                 {
                     settings.radarResourceCount = checked;
+                    // 旧采集页的 harvestingSize 与这里是同一个效果，一起写，避免旧开关残留导致行为不一致
+                    settings.harvestingSize = checked;
                     RadarSettings.putBoolean(this, "radarResourceCount", checked);
+                    RadarSettings.putBoolean(this, "harvestingSize", checked);
                 });
 
         addCheckRow(content, "资源距离标签", "在资源下方显示到本机的码数",
@@ -207,6 +327,8 @@ public class RenderOptionsActivity extends AppCompatActivity
                     settings.radarResourceDistance = checked;
                     RadarSettings.putBoolean(this, "radarResourceDistance", checked);
                 });
+
+        addDivider(content);
 
         addCheckRow(content, "资源聚类", "把相邻同类资源合并成一个点并显示数量",
                 settings.radarClusters, checked ->
@@ -226,6 +348,8 @@ public class RenderOptionsActivity extends AppCompatActivity
             settings.radarClusterMinSize = value;
             RadarSettings.putInt(this, "radarClusterMinSize", value);
         });
+
+        addDivider(content);
 
         addCheckRow(content, "距离环", "以本机为中心的 10/20/40 码参考环",
                 settings.radarShowRings, checked ->
@@ -250,40 +374,44 @@ public class RenderOptionsActivity extends AppCompatActivity
     }
 
     // ------------------------------------------------------------------
-    // 资源（每类折叠：Static / Living 等级矩阵）
+    // 3. 资源（每类：类别总开关 + Static / Living 等级矩阵）
     // ------------------------------------------------------------------
-    private void buildResourceSections()
+    private void buildResourceSection(String kind)
+    {
+        boolean leftColumn = RESOURCE_DISPLAY_ORDER[0].equals(kind)
+                || RESOURCE_DISPLAY_ORDER[1].equals(kind)
+                || RESOURCE_DISPLAY_ORDER[2].equals(kind);
+
+        String title = "资源 · " + resourceDisplayName(kind);
+        LinearLayout content = newSection("res_" + kind, title, "类别总开关 + Static / Living 矩阵",
+                false, leftColumn, 20);
+
+        addCheckRow(content, "显示该类资源（总开关）", "关闭后该类别 Static + Living 全部隐藏",
+                settings.isResourceKindEnabled(kind), checked ->
+                        settings.setResourceKindEnabled(this, kind, checked));
+
+        addDivider(content);
+
+        addPlainLabel(content, "Static 静态资源（地图上的矿/树/草/石/皮点）", COLOR_TEXT, 13);
+        addMatrixBlock(content, kind, false);
+
+        addDivider(content);
+
+        addPlainLabel(content, "Living 活体资源（资源怪 / 可采集生物，雷达上带金框）", COLOR_TEXT, 13);
+        addMatrixBlock(content, kind, true);
+    }
+
+    private String resourceDisplayName(String kind)
     {
         for (int i = 0; i < RadarSettings.RESOURCE_KIND_KEYS.length; i++)
         {
-            final String kind = RadarSettings.RESOURCE_KIND_KEYS[i];
-            final String title = RadarSettings.RESOURCE_KIND_NAMES[i];
-            LinearLayout content = createSection("资源 · " + title, false);
-
-            addPlainLabel(content, "Static 静态资源（地图上的矿/树/草/石/皮点）", COLOR_TEXT, 13);
-            addMatrixBlock(content, kind, false);
-
-            addDivider(content);
-
-            addPlainLabel(content, "Living 活体资源（资源怪 / 可采集生物）", COLOR_TEXT, 13);
-            addMatrixBlock(content, kind, true);
+            if (RadarSettings.RESOURCE_KIND_KEYS[i].equals(kind))
+            {
+                return RadarSettings.RESOURCE_KIND_NAMES[i];
+            }
         }
 
-        LinearLayout content = createSection("资源 · 其他", true);
-
-        addCheckRow(content, "钓鱼点", "显示 Fishing Zone",
-                settings.harvestingZoneFishing, checked ->
-                {
-                    settings.harvestingZoneFishing = checked;
-                    RadarSettings.putBoolean(this, "harvestingZoneFishing", checked);
-                });
-
-        addCheckRow(content, "显示血量条", "活体资源/怪物血条（同一开关）",
-                settings.mobHp, checked ->
-                {
-                    settings.mobHp = checked;
-                    RadarSettings.putBoolean(this, "mobHp", checked);
-                });
+        return kind;
     }
 
     /**
@@ -294,26 +422,40 @@ public class RenderOptionsActivity extends AppCompatActivity
     {
         final boolean[][] matrix = settings.getResourceMatrix(living, kind);
 
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setBackgroundColor(COLOR_MATRIX_BG);
+        block.setPadding(px(6), px(6), px(6), px(6));
+        LinearLayout.LayoutParams blockParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        blockParams.topMargin = px(4);
+        parent.addView(block, blockParams);
+
+        // 表头：T1 ~ T8
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setBackgroundColor(COLOR_MATRIX_HEADER);
 
         TextView corner = new TextView(this);
-        corner.setText("E\\T");
+        corner.setText("T / E");
         corner.setTextColor(COLOR_TEXT_DIM);
-        corner.setTextSize(10);
-        corner.setWidth(34 * dp);
+        corner.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        corner.setGravity(Gravity.CENTER_VERTICAL);
+        corner.setWidth(px(40));
         header.addView(corner);
 
         for (int tier = 0; tier < RadarSettings.MATRIX_TIERS; tier++)
         {
             final int column = tier;
+            boolean columnOn = isColumnAllOn(matrix, column);
+
             TextView columnLabel = new TextView(this);
             columnLabel.setText("T" + (tier + 1));
-            columnLabel.setTextColor(COLOR_TEXT);
-            columnLabel.setTextSize(10);
+            columnLabel.setTextColor(columnOn ? COLOR_ACCENT : COLOR_TEXT_DIM);
+            columnLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
             columnLabel.setGravity(Gravity.CENTER);
-            columnLabel.setWidth(30 * dp);
+            columnLabel.setLayoutParams(new LinearLayout.LayoutParams(px(32), px(26)));
             columnLabel.setOnClickListener(v ->
             {
                 boolean next = !isColumnAllOn(matrix, column);
@@ -324,20 +466,23 @@ public class RenderOptionsActivity extends AppCompatActivity
             header.addView(columnLabel);
         }
 
-        parent.addView(header);
+        block.addView(header);
 
         for (int enchant = 0; enchant < RadarSettings.MATRIX_ENCHANTS; enchant++)
         {
             final int row = enchant;
+            boolean rowOn = isRowAllOn(matrix, row);
+
             LinearLayout line = new LinearLayout(this);
             line.setOrientation(LinearLayout.HORIZONTAL);
             line.setGravity(Gravity.CENTER_VERTICAL);
 
             TextView rowLabel = new TextView(this);
             rowLabel.setText("E" + enchant);
-            rowLabel.setTextColor(COLOR_TEXT);
-            rowLabel.setTextSize(10);
-            rowLabel.setWidth(34 * dp);
+            rowLabel.setTextColor(rowOn ? COLOR_ACCENT : COLOR_TEXT_DIM);
+            rowLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            rowLabel.setGravity(Gravity.CENTER_VERTICAL);
+            rowLabel.setWidth(px(40));
             rowLabel.setOnClickListener(v ->
             {
                 boolean next = !isRowAllOn(matrix, row);
@@ -360,10 +505,10 @@ public class RenderOptionsActivity extends AppCompatActivity
                 line.addView(cell);
             }
 
-            parent.addView(line);
+            block.addView(line);
         }
 
-        addButtonRow(parent, new String[]{"全开", "全不选"},
+        addButtonRow(block, new String[]{"全开", "全不选"},
                 new Runnable[]{
                         () ->
                         {
@@ -378,6 +523,13 @@ public class RenderOptionsActivity extends AppCompatActivity
                             rebuildSections();
                         }
                 });
+
+        TextView hint = new TextView(this);
+        hint.setText("点 T 列标题 / E 行标签 = 整列 / 整行开关");
+        hint.setTextColor(COLOR_TEXT_DIM);
+        hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        hint.setPadding(0, px(2), 0, 0);
+        block.addView(hint);
     }
 
     private boolean isColumnAllOn(boolean[][] matrix, int column)
@@ -407,11 +559,31 @@ public class RenderOptionsActivity extends AppCompatActivity
     }
 
     // ------------------------------------------------------------------
-    // 敌人
+    // 3.1 资源 · 其他
+    // ------------------------------------------------------------------
+    private void buildResourceOtherSection()
+    {
+        LinearLayout content = newSection("res_other", "资源 · 其他", "钓鱼点 / 血量条", false, false, 3);
+
+        addCheckRow(content, "钓鱼点", "显示 Fishing Zone",
+                settings.harvestingZoneFishing, checked ->
+                {
+                    settings.harvestingZoneFishing = checked;
+                    settings.rebuildHarvestableTypes();
+                    RadarSettings.putBoolean(this, "harvestingZoneFishing", checked);
+                });
+
+        addPlainLabel(content, "怪物 / 活体资源的血量条统一在「敌人」分组底部开关。", COLOR_TEXT_DIM, 11);
+    }
+
+    // ------------------------------------------------------------------
+    // 4. 敌人：类别开关 → 等级矩阵 → 血条
     // ------------------------------------------------------------------
     private void buildEnemySection()
     {
-        LinearLayout content = createSection("敌人 / Enemies", true);
+        LinearLayout content = newSection("enemy", "敌人 / Enemies", "类别 → 矩阵 → 血条", false, false, 16);
+
+        addPlainLabel(content, "类别开关", COLOR_TEXT, 13);
 
         addCheckRow(content, "Boss", "红色", settings.mobBoss, checked ->
         {
@@ -462,89 +634,143 @@ public class RenderOptionsActivity extends AppCompatActivity
         });
 
         addDivider(content);
-        addPlainLabel(content, "活体资源主开关（细分类别见「资源」分组）", COLOR_TEXT, 13);
-        addPlainLabel(content, "Living 活体资源显示由「资源 · 类别 · Living 矩阵」控制", COLOR_TEXT_DIM, 11);
+        addPlainLabel(content, "活体资源主开关", COLOR_TEXT, 13);
+        addPlainLabel(content, "细分类别由「资源 · 类别 · Living 矩阵」控制", COLOR_TEXT_DIM, 11);
 
-        addCheckRow(content, "可采集（Harvestable）", "矿/木/草/石资源怪",
-                settings.mobHarvestable, checked ->
-                {
-                    settings.mobHarvestable = checked;
-                    RadarSettings.putBoolean(this, "mobHarvestable", checked);
-                });
+        addCheckRow(content, "可采集（Harvestable）", "矿/木/草/石资源怪", settings.mobHarvestable, checked ->
+        {
+            settings.mobHarvestable = checked;
+            RadarSettings.putBoolean(this, "mobHarvestable", checked);
+        });
 
-        addCheckRow(content, "可剥皮（Skinnable）", "兽皮资源怪",
-                settings.mobSkinnable, checked ->
-                {
-                    settings.mobSkinnable = checked;
-                    RadarSettings.putBoolean(this, "mobSkinnable", checked);
-                });
+        addCheckRow(content, "可剥皮（Skinnable）", "兽皮资源怪", settings.mobSkinnable, checked ->
+        {
+            settings.mobSkinnable = checked;
+            RadarSettings.putBoolean(this, "mobSkinnable", checked);
+        });
 
         addDivider(content);
-        addPlainLabel(content, "等级 / 附魔矩阵（普通怪物，未知等级默认显示）", COLOR_TEXT, 13);
+        addPlainLabel(content, "等级 / 附魔矩阵（未知等级默认显示）", COLOR_TEXT, 13);
+        addMobMatrixBlock(content);
 
-        LinearLayout tierLine = new LinearLayout(this);
-        tierLine.setOrientation(LinearLayout.HORIZONTAL);
-        tierLine.setGravity(Gravity.CENTER_VERTICAL);
-        TextView tierLabel = new TextView(this);
-        tierLabel.setText("T");
-        tierLabel.setTextColor(COLOR_TEXT_DIM);
-        tierLabel.setTextSize(10);
-        tierLabel.setWidth(34 * dp);
-        tierLine.addView(tierLabel);
+        addDivider(content);
 
-        for (int tier = 0; tier < 8; tier++)
+        addCheckRow(content, "显示血量条", "怪物 / 活体资源血条（同一开关）", settings.mobHp, checked ->
         {
-            final int index = tier;
-            CheckBox cell = makeMatrixCell();
-            cell.setChecked(settings.mobTiers[index]);
-            cell.setOnCheckedChangeListener((buttonView, isChecked) ->
-            {
-                settings.mobTiers[index] = isChecked;
-                RadarSettings.putBoolean(this, "mobTier" + (index + 1), isChecked);
-            });
-            tierLine.addView(cell);
-        }
+            settings.mobHp = checked;
+            RadarSettings.putBoolean(this, "mobHp", checked);
+        });
+    }
 
-        content.addView(tierLine);
+    /** 怪物等级/附魔矩阵：T1~T8 一排、E0~E4 一排（表头清晰）。 */
+    private void addMobMatrixBlock(LinearLayout parent)
+    {
+        LinearLayout block = new LinearLayout(this);
+        block.setOrientation(LinearLayout.VERTICAL);
+        block.setBackgroundColor(COLOR_MATRIX_BG);
+        block.setPadding(px(6), px(6), px(6), px(6));
+        LinearLayout.LayoutParams blockParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        blockParams.topMargin = px(6);
+        parent.addView(block, blockParams);
 
-        LinearLayout enchantLine = new LinearLayout(this);
-        enchantLine.setOrientation(LinearLayout.HORIZONTAL);
-        enchantLine.setGravity(Gravity.CENTER_VERTICAL);
-        TextView enchantLabel = new TextView(this);
-        enchantLabel.setText("E");
-        enchantLabel.setTextColor(COLOR_TEXT_DIM);
-        enchantLabel.setTextSize(10);
-        enchantLabel.setWidth(34 * dp);
-        enchantLine.addView(enchantLabel);
+        addMobMatrixHeader(block, "等级", "T", RadarSettings.MATRIX_TIERS);
+        addMobMatrixLine(block, "T", RadarSettings.MATRIX_TIERS, true);
+        addMobMatrixHeader(block, "附魔", "E", RadarSettings.MATRIX_ENCHANTS);
+        addMobMatrixLine(block, "E", RadarSettings.MATRIX_ENCHANTS, false);
 
-        for (int enchant = 0; enchant < 5; enchant++)
-        {
-            final int index = enchant;
-            CheckBox cell = makeMatrixCell();
-            cell.setChecked(settings.mobEnchants[index]);
-            cell.setOnCheckedChangeListener((buttonView, isChecked) ->
-            {
-                settings.mobEnchants[index] = isChecked;
-                RadarSettings.putBoolean(this, "mobEnchant" + index, isChecked);
-            });
-            enchantLine.addView(cell);
-        }
-
-        content.addView(enchantLine);
-
-        addButtonRow(content, new String[]{"等级全开", "等级全不选", "附魔全开", "附魔全不选"},
+        addButtonRow(block, new String[]{"等级全开", "等级全不选", "附魔全开", "附魔全不选"},
                 new Runnable[]{
                         () -> setMobTiers(true),
                         () -> setMobTiers(false),
                         () -> setMobEnchants(true),
                         () -> setMobEnchants(false)
                 });
+    }
 
-        addCheckRow(content, "显示怪物血量条", "", settings.mobHp, checked ->
+    private void addMobMatrixHeader(LinearLayout block, String label, String prefix, int count)
+    {
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setBackgroundColor(COLOR_MATRIX_HEADER);
+
+        TextView corner = new TextView(this);
+        corner.setText(label);
+        corner.setTextColor(COLOR_TEXT_DIM);
+        corner.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        corner.setGravity(Gravity.CENTER_VERTICAL);
+        corner.setWidth(px(40));
+        header.addView(corner);
+
+        for (int i = 0; i < count; i++)
         {
-            settings.mobHp = checked;
-            RadarSettings.putBoolean(this, "mobHp", checked);
-        });
+            final int index = i;
+            boolean on = "T".equals(prefix) ? settings.mobTiers[index] : settings.mobEnchants[index];
+
+            TextView columnLabel = new TextView(this);
+            columnLabel.setText(prefix + ("T".equals(prefix) ? (index + 1) : index));
+            columnLabel.setTextColor(on ? COLOR_ACCENT : COLOR_TEXT_DIM);
+            columnLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+            columnLabel.setGravity(Gravity.CENTER);
+            columnLabel.setLayoutParams(new LinearLayout.LayoutParams(px(32), px(26)));
+            columnLabel.setOnClickListener(v ->
+            {
+                if ("T".equals(prefix))
+                {
+                    settings.mobTiers[index] = !settings.mobTiers[index];
+                    RadarSettings.putBoolean(this, "mobTier" + (index + 1), settings.mobTiers[index]);
+                }
+                else
+                {
+                    settings.mobEnchants[index] = !settings.mobEnchants[index];
+                    RadarSettings.putBoolean(this, "mobEnchant" + index, settings.mobEnchants[index]);
+                }
+
+                rebuildSections();
+            });
+            header.addView(columnLabel);
+        }
+
+        block.addView(header);
+    }
+
+    private void addMobMatrixLine(LinearLayout block, String label, int count, boolean tiers)
+    {
+        LinearLayout line = new LinearLayout(this);
+        line.setOrientation(LinearLayout.HORIZONTAL);
+        line.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView rowLabel = new TextView(this);
+        rowLabel.setText(label);
+        rowLabel.setTextColor(COLOR_TEXT_DIM);
+        rowLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        rowLabel.setGravity(Gravity.CENTER_VERTICAL);
+        rowLabel.setWidth(px(40));
+        line.addView(rowLabel);
+
+        for (int i = 0; i < count; i++)
+        {
+            final int index = i;
+            CheckBox cell = makeMatrixCell();
+            cell.setChecked(tiers ? settings.mobTiers[index] : settings.mobEnchants[index]);
+            cell.setOnCheckedChangeListener((buttonView, isChecked) ->
+            {
+                if (tiers)
+                {
+                    settings.mobTiers[index] = isChecked;
+                    RadarSettings.putBoolean(this, "mobTier" + (index + 1), isChecked);
+                }
+                else
+                {
+                    settings.mobEnchants[index] = isChecked;
+                    RadarSettings.putBoolean(this, "mobEnchant" + index, isChecked);
+                }
+            });
+            line.addView(cell);
+        }
+
+        block.addView(line);
     }
 
     private void setMobTiers(boolean value)
@@ -570,11 +796,11 @@ public class RenderOptionsActivity extends AppCompatActivity
     }
 
     // ------------------------------------------------------------------
-    // 玩家
+    // 5. 玩家
     // ------------------------------------------------------------------
     private void buildPlayerSection()
     {
-        LinearLayout content = createSection("玩家 / Players", false);
+        LinearLayout content = newSection("player", "玩家 / Players", "显示 / 配色 / 数量", false, false, 11);
 
         addCheckRow(content, "显示玩家", "总开关", settings.playerDot, checked ->
         {
@@ -593,6 +819,8 @@ public class RenderOptionsActivity extends AppCompatActivity
             settings.playerGuildName = checked;
             RadarSettings.putBoolean(this, "playerGuildName", checked);
         });
+
+        addDivider(content);
 
         addCheckRow(content, "公会 / 联盟配色", "同公会绿、同联盟紫", settings.playerAllianceColor, checked ->
         {
@@ -617,6 +845,8 @@ public class RenderOptionsActivity extends AppCompatActivity
             settings.playerPassive = checked;
             RadarSettings.putBoolean(this, "playerPassive", checked);
         });
+
+        addDivider(content);
 
         addCheckRow(content, "血量条", "", settings.playerHealth, checked ->
         {
@@ -651,11 +881,11 @@ public class RenderOptionsActivity extends AppCompatActivity
     }
 
     // ------------------------------------------------------------------
-    // 箱子
+    // 6. 箱子
     // ------------------------------------------------------------------
     private void buildChestSection()
     {
-        LinearLayout content = createSection("箱子 / Chests", false);
+        LinearLayout content = newSection("chest", "箱子 / Chests", "品质过滤", false, false, 5);
 
         addChestRow(content, "普通箱子", "standard", "chestStandard");
         addChestRow(content, "优秀箱子", "uncommon", "chestUncommon");
@@ -676,77 +906,167 @@ public class RenderOptionsActivity extends AppCompatActivity
     }
 
     // ------------------------------------------------------------------
-    // 通用控件
+    // 7. 底部：恢复默认
     // ------------------------------------------------------------------
-    private LinearLayout createSection(String title, boolean open)
+    private void buildResetSection()
     {
+        LinearLayout content = newSection("reset", "其他 / 恢复默认", "只重置本页渲染项", false, false, 2);
+
+        addPlainLabel(content, "把所有渲染开关恢复默认值；不会重置订阅、mihomo、悬浮窗位置与字号。",
+                COLOR_TEXT_DIM, 11);
+
+        addButtonRow(content, new String[]{"恢复渲染默认值"}, new Runnable[]{this::confirmResetDefaults});
+    }
+
+    private void confirmResetDefaults()
+    {
+        new AlertDialog.Builder(this)
+                .setTitle("恢复渲染默认值")
+                .setMessage("将本页所有渲染开关恢复默认，确定继续？")
+                .setPositiveButton("恢复", (dialog, which) -> resetRenderDefaults())
+                .setNegativeButton("取消", null)
+                .show();
+    }
+
+    private void resetRenderDefaults()
+    {
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
+        SharedPreferences.Editor editor = preferences.edit();
+
+        for (String key : RESET_KEYS)
+        {
+            editor.remove(key);
+        }
+
+        for (String kind : RadarSettings.RESOURCE_KIND_KEYS)
+        {
+            editor.remove("resStatic_" + kind);
+            editor.remove("resLiving_" + kind);
+        }
+
+        for (Section section : sections)
+        {
+            editor.remove(PREF_SECTION_OPEN + section.id);
+        }
+
+        editor.apply();
+
+        // 重新从（已清空的）持久化状态加载默认值，并重建页面
+        settings.init(getApplicationContext());
+        sections.clear();
+        buildSections();
+        layoutSections();
+
+        Toast.makeText(this, "已恢复渲染默认值", Toast.LENGTH_SHORT).show();
+    }
+
+    // ------------------------------------------------------------------
+    // 分组容器 / 折叠
+    // ------------------------------------------------------------------
+    private LinearLayout newSection(String id, String title, String subtitle,
+                                    boolean defaultOpen, boolean leftColumn, int weight)
+    {
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(this);
+        boolean open = preferences.getBoolean(PREF_SECTION_OPEN + id, defaultOpen);
+
         LinearLayout section = new LinearLayout(this);
         section.setOrientation(LinearLayout.VERTICAL);
         section.setBackgroundColor(COLOR_SECTION_BG);
-        section.setLayoutParams(new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setBackgroundColor(COLOR_SECTION_HEADER);
-        header.setPadding(12 * dp, 12 * dp, 12 * dp, 12 * dp);
+        header.setPadding(px(12), px(7), px(12), px(7));
 
         TextView arrow = new TextView(this);
         arrow.setText(open ? "▾" : "▸");
         arrow.setTextColor(COLOR_ACCENT);
-        arrow.setTextSize(14);
-        arrow.setWidth(22 * dp);
+        arrow.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        arrow.setWidth(px(22));
         header.addView(arrow);
 
         TextView titleView = new TextView(this);
         titleView.setText(title);
         titleView.setTextColor(COLOR_ACCENT);
-        titleView.setTextSize(16);
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
         titleView.setTypeface(Typeface.DEFAULT_BOLD);
+        titleView.setSingleLine(true);
+        titleView.setEllipsize(TextUtils.TruncateAt.END);
         header.addView(titleView);
+
+        if (subtitle != null && !subtitle.isEmpty())
+        {
+            TextView subtitleView = new TextView(this);
+            subtitleView.setText(subtitle);
+            subtitleView.setTextColor(COLOR_TEXT_DIM);
+            subtitleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
+            subtitleView.setSingleLine(true);
+            subtitleView.setEllipsize(TextUtils.TruncateAt.END);
+            subtitleView.setGravity(Gravity.END);
+
+            LinearLayout.LayoutParams subtitleParams = new LinearLayout.LayoutParams(
+                    0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            subtitleParams.leftMargin = px(8);
+            header.addView(subtitleView, subtitleParams);
+        }
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(10 * dp, 6 * dp, 10 * dp, 10 * dp);
+        content.setPadding(px(10), px(4), px(10), px(10));
         content.setVisibility(open ? View.VISIBLE : View.GONE);
-
-        header.setOnClickListener(v ->
-        {
-            boolean visible = content.getVisibility() == View.VISIBLE;
-            content.setVisibility(visible ? View.GONE : View.VISIBLE);
-            arrow.setText(visible ? "▸" : "▾");
-        });
 
         section.addView(header);
         section.addView(content);
-        sectionViews.add(section);
+
+        final Section sectionModel = new Section(id, title, subtitle, leftColumn, weight,
+                section, content, arrow, open);
+        header.setOnClickListener(v -> toggleSection(sectionModel));
+        sections.add(sectionModel);
 
         return content;
     }
 
-    private void rebuildSections()
+    private void toggleSection(Section section)
     {
-        sectionViews.clear();
-        buildSections();
-        layoutSections();
+        section.open = !section.open;
+        section.content.setVisibility(section.open ? View.VISIBLE : View.GONE);
+        section.arrow.setText(section.open ? "▾" : "▸");
+
+        PreferenceManager.getDefaultSharedPreferences(this).edit()
+                .putBoolean(PREF_SECTION_OPEN + section.id, section.open)
+                .apply();
     }
 
-    /**
-     * 三选一（分段按钮）：用于「主城暂停」这种枚举型设置。
-     * 选中项用强调色高亮，点其他项时回调并重建页面刷新高亮。
-     */
+    /** 重建所有分组（矩阵整体操作后刷新勾选状态），并保持滚动位置不跳。 */
+    private void rebuildSections()
+    {
+        final int scrollY = optionsScroll != null ? optionsScroll.getScrollY() : 0;
+
+        sections.clear();
+        buildSections();
+        layoutSections();
+
+        if (optionsScroll != null)
+        {
+            optionsScroll.post(() -> optionsScroll.scrollTo(0, scrollY));
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 通用控件
+    // ------------------------------------------------------------------
     private void addChoiceRow(LinearLayout parent, String title, String subtitle, String[] labels,
                               int selected, IntConsumer onChange)
     {
         LinearLayout wrapper = new LinearLayout(this);
         wrapper.setOrientation(LinearLayout.VERTICAL);
-        wrapper.setPadding(0, 8 * dp, 0, 4 * dp);
+        wrapper.setPadding(0, px(8), 0, px(4));
 
         TextView titleView = new TextView(this);
         titleView.setText(title);
         titleView.setTextColor(COLOR_TEXT);
-        titleView.setTextSize(14);
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         wrapper.addView(titleView);
 
         if (subtitle != null && !subtitle.isEmpty())
@@ -754,13 +1074,13 @@ public class RenderOptionsActivity extends AppCompatActivity
             TextView subtitleView = new TextView(this);
             subtitleView.setText(subtitle);
             subtitleView.setTextColor(COLOR_TEXT_DIM);
-            subtitleView.setTextSize(11);
+            subtitleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
             wrapper.addView(subtitleView);
         }
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, 6 * dp, 0, 0);
+        row.setPadding(0, px(6), 0, 0);
 
         for (int i = 0; i < labels.length; i++)
         {
@@ -769,15 +1089,15 @@ public class RenderOptionsActivity extends AppCompatActivity
 
             TextView button = new TextView(this);
             button.setText(labels[i]);
-            button.setTextSize(12);
+            button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
             button.setGravity(Gravity.CENTER);
             button.setTextColor(active ? Color.WHITE : COLOR_TEXT_DIM);
             button.setBackgroundColor(active ? COLOR_ACCENT : 0xFF3A3A3A);
-            button.setPadding(10 * dp, 7 * dp, 10 * dp, 7 * dp);
+            button.setPadding(px(10), px(7), px(10), px(7));
 
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            params.rightMargin = 8 * dp;
+            params.rightMargin = px(8);
             row.addView(button, params);
 
             button.setOnClickListener(v ->
@@ -802,7 +1122,7 @@ public class RenderOptionsActivity extends AppCompatActivity
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
-        row.setPadding(0, 4 * dp, 0, 4 * dp);
+        row.setPadding(0, px(4), 0, px(4));
 
         CheckBox checkBox = new CheckBox(this);
         checkBox.setChecked(checked);
@@ -819,7 +1139,7 @@ public class RenderOptionsActivity extends AppCompatActivity
         TextView titleView = new TextView(this);
         titleView.setText(title);
         titleView.setTextColor(COLOR_TEXT);
-        titleView.setTextSize(14);
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         texts.addView(titleView);
 
         if (subtitle != null && !subtitle.isEmpty())
@@ -827,19 +1147,14 @@ public class RenderOptionsActivity extends AppCompatActivity
             TextView subtitleView = new TextView(this);
             subtitleView.setText(subtitle);
             subtitleView.setTextColor(COLOR_TEXT_DIM);
-            subtitleView.setTextSize(11);
+            subtitleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
             texts.addView(subtitleView);
         }
 
         row.addView(texts);
 
-        View.OnClickListener toggle = v ->
-        {
-            checkBox.setChecked(!checkBox.isChecked());
-            onChange.accept(checkBox.isChecked());
-        };
-
-        row.setOnClickListener(toggle);
+        // 点整行 = 切开关；只在这里改 CheckBox，避免 onChange 被触发两次
+        row.setOnClickListener(v -> checkBox.toggle());
         checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> onChange.accept(isChecked));
 
         parent.addView(row);
@@ -850,12 +1165,12 @@ public class RenderOptionsActivity extends AppCompatActivity
     {
         LinearLayout wrapper = new LinearLayout(this);
         wrapper.setOrientation(LinearLayout.VERTICAL);
-        wrapper.setPadding(0, 6 * dp, 0, 6 * dp);
+        wrapper.setPadding(0, px(6), 0, px(6));
 
         TextView label = new TextView(this);
         label.setText(title + "：" + value + suffix);
         label.setTextColor(COLOR_TEXT);
-        label.setTextSize(14);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         wrapper.addView(label);
 
         SeekBar seekBar = new SeekBar(this);
@@ -897,7 +1212,7 @@ public class RenderOptionsActivity extends AppCompatActivity
     {
         LinearLayout wrapper = new LinearLayout(this);
         wrapper.setOrientation(LinearLayout.VERTICAL);
-        wrapper.setPadding(0, 6 * dp, 0, 6 * dp);
+        wrapper.setPadding(0, px(6), 0, px(6));
 
         int scale = Math.round(1f / step);
         int steps = Math.max(1, Math.round((max - min) / step));
@@ -905,7 +1220,7 @@ public class RenderOptionsActivity extends AppCompatActivity
         TextView label = new TextView(this);
         label.setText(title + "：" + formatFloat(value) + suffix);
         label.setTextColor(COLOR_TEXT);
-        label.setTextSize(14);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
         wrapper.addView(label);
 
         SeekBar seekBar = new SeekBar(this);
@@ -944,7 +1259,13 @@ public class RenderOptionsActivity extends AppCompatActivity
 
     private static String formatFloat(float value)
     {
-        return String.format(java.util.Locale.US, "%.1f", value);
+        return String.format(Locale.US, "%.1f", value);
+    }
+
+    /** dp -> px（用真实 density 换算；不能用 Math.round(density) 当倍率，高密度屏会整体偏大导致矩阵被裁）。 */
+    private int px(float dpValue)
+    {
+        return Math.round(dpValue * density);
     }
 
     private void addPlainLabel(LinearLayout parent, String text, int color, int sizeSp)
@@ -953,7 +1274,7 @@ public class RenderOptionsActivity extends AppCompatActivity
         view.setText(text);
         view.setTextColor(color);
         view.setTextSize(TypedValue.COMPLEX_UNIT_SP, sizeSp);
-        view.setPadding(0, 6 * dp, 0, 2 * dp);
+        view.setPadding(0, px(6), 0, px(2));
         parent.addView(view);
     }
 
@@ -962,9 +1283,9 @@ public class RenderOptionsActivity extends AppCompatActivity
         View divider = new View(this);
         divider.setBackgroundColor(COLOR_DIVIDER);
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, dp / 2));
-        params.topMargin = 6 * dp;
-        params.bottomMargin = 6 * dp;
+                ViewGroup.LayoutParams.MATCH_PARENT, Math.max(1, px(0.5f)));
+        params.topMargin = px(6);
+        params.bottomMargin = px(6);
         parent.addView(divider, params);
     }
 
@@ -973,7 +1294,8 @@ public class RenderOptionsActivity extends AppCompatActivity
         CheckBox cell = new CheckBox(this);
         cell.setButtonTintList(android.content.res.ColorStateList.valueOf(COLOR_TEXT));
         cell.setPadding(0, 0, 0, 0);
-        cell.setLayoutParams(new LinearLayout.LayoutParams(30 * dp, 34 * dp));
+        cell.setGravity(Gravity.CENTER);
+        cell.setLayoutParams(new LinearLayout.LayoutParams(px(32), px(36)));
         return cell;
     }
 
@@ -981,7 +1303,7 @@ public class RenderOptionsActivity extends AppCompatActivity
     {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setPadding(0, 4 * dp, 0, 2 * dp);
+        row.setPadding(0, px(4), 0, px(2));
 
         for (int i = 0; i < labels.length; i++)
         {
@@ -989,14 +1311,14 @@ public class RenderOptionsActivity extends AppCompatActivity
             TextView button = new TextView(this);
             button.setText(labels[i]);
             button.setTextColor(Color.WHITE);
-            button.setTextSize(12);
+            button.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
             button.setGravity(Gravity.CENTER);
             button.setBackgroundColor(0xFF3A3A3A);
-            button.setPadding(10 * dp, 6 * dp, 10 * dp, 6 * dp);
+            button.setPadding(px(10), px(7), px(10), px(7));
 
             LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                     ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            params.rightMargin = 8 * dp;
+            params.rightMargin = px(8);
             row.addView(button, params);
 
             button.setOnClickListener(v -> action.run());
