@@ -15,6 +15,16 @@ import java.util.Map;
 public class RadarSettings
 {
     private static RadarSettings instance;
+
+    // ------------------------------------------------------------------
+    // 资源类别（渲染选项页/MobsResourceTable/图标都用这套 key）
+    // ------------------------------------------------------------------
+    public static final String[] RESOURCE_KIND_KEYS = {"wood", "rock", "fiber", "hide", "ore"};
+    public static final String[] RESOURCE_KIND_NAMES = {"Wood 木材", "Rock 岩石", "Fiber 纤维", "Hide 兽皮", "Ore 矿石"};
+    /** 每个类别的等级矩阵：matrix[enchant 0..4][tier 0..7]。 */
+    public static final int MATRIX_ENCHANTS = 5;
+    public static final int MATRIX_TIERS = 8;
+
     public  ArrayList<HarvestableType> harvestableTypes = new ArrayList<>();
     public boolean playerDot = true;
     public boolean playerNickname = true;
@@ -23,6 +33,13 @@ public class RadarSettings
     public boolean playerGuildName = false;
     public boolean playerDistance = false;
     public boolean playerSound= false;
+    /** PC 式玩家分组：联盟/阵营配色、敌对(红名)、被动/中立、雷达上检测到的玩家列表。 */
+    public boolean playerAllianceColor = true;
+    public boolean playerFactionColor = true;
+    public boolean playerHostile = true;
+    public boolean playerPassive = true;
+    public boolean playerPanel = true;
+    public int playerMaxDisplay = 50;
 
     /**
      * 过滤默认值：新安装/首次进游戏时必须能直接看到资源与怪物。
@@ -45,6 +62,13 @@ public class RadarSettings
     public boolean mobSkinnable = true;
     public boolean mobHarvestable = true;
     public boolean mobBoss = true;
+    /** PC 式敌人分类开关（默认全开，与配色一一对应）。 */
+    public boolean mobMiniBoss = true;
+    public boolean mobEnemy = true;
+    public boolean mobDrone = true;
+    public boolean mobMist = true;
+    public boolean mobEvents = true;
+    public boolean mobGuard = true;
     public boolean harvestingFiber = true;
     public boolean harvestingWood = true;
     public boolean harvestingHide = true;
@@ -52,6 +76,27 @@ public class RadarSettings
     public boolean harvestingRock = true;
     public boolean harvestingZoneFishing = true;
     public boolean harvestingSize = false;
+
+    // ------------------------------------------------------------------
+    // 雷达 / 显示（PC Radar 分组）
+    // ------------------------------------------------------------------
+    /** 图标大小倍率（0.5~2.0，1.0 = PC 默认）。 */
+    public float radarIconScale = 1f;
+    /** 资源等级角标：true=按类别色块 + 等级/附魔，false=直接用图标。 */
+    public boolean radarTierBadges = false;
+    /** 资源数量标签（节点剩余数量）。 */
+    public boolean radarResourceCount = false;
+    /** 资源距离标签（到本地玩家的码数）。 */
+    public boolean radarResourceDistance = false;
+    /** 资源聚类（同类相邻节点合并成一个点）。 */
+    public boolean radarClusters = false;
+    public int radarClusterRadius = 30;
+    public int radarClusterMinSize = 2;
+    /** HUD 统计框 / 距离环 / 背景。 */
+    public boolean radarShowHud = true;
+    public boolean radarShowRings = true;
+    public boolean radarShowBackground = true;
+
     public HashMap<String, Boolean> chests = new HashMap<>();
     public int pvpCircleBar;
     public int pvpCircleGapBar;
@@ -84,6 +129,11 @@ public class RadarSettings
 
     public int settingsTransparencyBar;
 
+    /** 静态资源等级矩阵：kind -> [enchant 0..4][tier 0..7]。 */
+    private final HashMap<String, boolean[][]> staticResourceMatrix = new HashMap<>();
+    /** 活体资源（资源怪）等级矩阵：kind -> [enchant 0..4][tier 0..7]。 */
+    private final HashMap<String, boolean[][]> livingResourceMatrix = new HashMap<>();
+
     public void init(Context context)
     {
         SharedPreferences sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context);
@@ -95,6 +145,13 @@ public class RadarSettings
         playerDistance = sharedPreferences.getBoolean("playerDistance", false);
         playerSound = sharedPreferences.getBoolean("playerSound", false);
         playerGuildName = sharedPreferences.getBoolean("playerGuildName", false);
+
+        playerAllianceColor = sharedPreferences.getBoolean("playerAllianceColor", true);
+        playerFactionColor = sharedPreferences.getBoolean("playerFactionColor", true);
+        playerHostile = sharedPreferences.getBoolean("playerHostile", true);
+        playerPassive = sharedPreferences.getBoolean("playerPassive", true);
+        playerPanel = sharedPreferences.getBoolean("playerPanel", true);
+        playerMaxDisplay = sharedPreferences.getInt("playerMaxDisplay", 50);
 
         // 等级/附魔：缺省=可见（PC 版默认有等级矩阵，这里全开保证任何地图都能看到资源）
         harvestingTiers[0] =  sharedPreferences.getBoolean("harvestingTier1", true);
@@ -209,6 +266,35 @@ public class RadarSettings
         mobOther = sharedPreferences.getBoolean("mobOther", true);
         mobSkinnable = sharedPreferences.getBoolean("mobSkinnable",true);
         mobBoss = sharedPreferences.getBoolean("mobBoss",true);
+        mobMiniBoss = sharedPreferences.getBoolean("mobMiniBoss", true);
+        mobEnemy = sharedPreferences.getBoolean("mobEnemy", true);
+        mobDrone = sharedPreferences.getBoolean("mobDrone", true);
+        mobMist = sharedPreferences.getBoolean("mobMist", true);
+        mobEvents = sharedPreferences.getBoolean("mobEvents", true);
+        mobGuard = sharedPreferences.getBoolean("mobGuard", true);
+
+        // 雷达/显示
+        radarIconScale = sharedPreferences.getFloat("radarIconScale", 1f);
+        radarTierBadges = sharedPreferences.getBoolean("radarTierBadges", false);
+        radarResourceCount = sharedPreferences.getBoolean("radarResourceCount", false);
+        radarResourceDistance = sharedPreferences.getBoolean("radarResourceDistance", false);
+        radarClusters = sharedPreferences.getBoolean("radarClusters", false);
+        radarClusterRadius = sharedPreferences.getInt("radarClusterRadius", 30);
+        radarClusterMinSize = sharedPreferences.getInt("radarClusterMinSize", 2);
+        radarShowHud = sharedPreferences.getBoolean("radarShowHud", true);
+        radarShowRings = sharedPreferences.getBoolean("radarShowRings", true);
+        radarShowBackground = sharedPreferences.getBoolean("radarShowBackground", true);
+
+        // 资源等级矩阵：旧版本没有矩阵 key，用旧的全局等级/附魔开关作为默认值，保证升级后行为不变
+        for (String kind : RESOURCE_KIND_KEYS)
+        {
+            boolean kindEnabledFromPrefs = isLegacyKindEnabled(sharedPreferences, kind);
+
+            staticResourceMatrix.put(kind, loadMatrix(sharedPreferences, "resStatic_" + kind,
+                    harvestingTiers, harvestingEnchants, kindEnabledFromPrefs));
+            livingResourceMatrix.put(kind, loadMatrix(sharedPreferences, "resLiving_" + kind,
+                    null, null, mobHarvestable && mobSkinnable));
+        }
 
         radarFloatingSettingWheelX = sharedPreferences.getInt("radarFloatingSettingWheelX", -999);
         radarFloatingSettingWheelY = sharedPreferences.getInt("radarFloatingSettingWheelY", -999);
@@ -259,9 +345,294 @@ public class RadarSettings
         settingsTransparencyBar = sharedPreferences.getInt("settingsTransparencyBar",1);
     }
 
+    private boolean isLegacyKindEnabled(SharedPreferences preferences, String kind)
+    {
+        switch (kind)
+        {
+            case "wood":
+                return harvestingWood;
+            case "rock":
+                return harvestingRock;
+            case "fiber":
+                return harvestingFiber;
+            case "hide":
+                return harvestingHide;
+            case "ore":
+                return harvestingOre;
+            default:
+                return true;
+        }
+    }
+
+    /**
+     * 读取一个类别矩阵。pref 里没有这个 key 时用 defaultOn + 旧的全局等级/附魔开关做默认值，
+     * 这样老用户升级后原有的“层级筛选”行为不会突然失效。
+     */
+    private boolean[][] loadMatrix(SharedPreferences preferences, String key,
+                                   boolean[] legacyTiers, boolean[] legacyEnchants, boolean defaultOn)
+    {
+        String packed = preferences.getString(key, null);
+        boolean[][] matrix = new boolean[MATRIX_ENCHANTS][MATRIX_TIERS];
+
+        if (packed != null && packed.length() >= MATRIX_ENCHANTS * MATRIX_TIERS)
+        {
+            for (int enchant = 0; enchant < MATRIX_ENCHANTS; enchant++)
+            {
+                for (int tier = 0; tier < MATRIX_TIERS; tier++)
+                {
+                    matrix[enchant][tier] = packed.charAt(enchant * MATRIX_TIERS + tier) == '1';
+                }
+            }
+
+            return matrix;
+        }
+
+        for (int enchant = 0; enchant < MATRIX_ENCHANTS; enchant++)
+        {
+            for (int tier = 0; tier < MATRIX_TIERS; tier++)
+            {
+                boolean value = defaultOn;
+
+                if (legacyTiers != null && tier < legacyTiers.length)
+                {
+                    value = value && legacyTiers[tier];
+                }
+
+                if (legacyEnchants != null && enchant < legacyEnchants.length)
+                {
+                    value = value && legacyEnchants[enchant];
+                }
+
+                matrix[enchant][tier] = value;
+            }
+        }
+
+        return matrix;
+    }
+
+    private static String packMatrix(boolean[][] matrix)
+    {
+        StringBuilder builder = new StringBuilder(MATRIX_ENCHANTS * MATRIX_TIERS);
+
+        for (int enchant = 0; enchant < MATRIX_ENCHANTS; enchant++)
+        {
+            for (int tier = 0; tier < MATRIX_TIERS; tier++)
+            {
+                builder.append(matrix[enchant][tier] ? '1' : '0');
+            }
+        }
+
+        return builder.toString();
+    }
+
+    public boolean[][] getResourceMatrix(boolean living, String kind)
+    {
+        String normalized = normalizeKind(kind);
+        HashMap<String, boolean[][]> source = living ? livingResourceMatrix : staticResourceMatrix;
+        boolean[][] matrix = source.get(normalized);
+
+        if (matrix == null)
+        {
+            matrix = new boolean[MATRIX_ENCHANTS][MATRIX_TIERS];
+
+            for (int enchant = 0; enchant < MATRIX_ENCHANTS; enchant++)
+            {
+                Arrays.fill(matrix[enchant], true);
+            }
+
+            source.put(normalized, matrix);
+        }
+
+        return matrix;
+    }
+
+    /** 把 "log"/"logs"/"wood" 统一成 "wood"；未知类别返回 null。 */
+    public static String normalizeKind(String kind)
+    {
+        if (kind == null)
+        {
+            return null;
+        }
+
+        String lower = kind.toLowerCase();
+
+        if (lower.startsWith("wood") || lower.startsWith("log"))
+        {
+            return "wood";
+        }
+
+        if (lower.startsWith("fiber"))
+        {
+            return "fiber";
+        }
+
+        if (lower.startsWith("hide") || lower.startsWith("leather"))
+        {
+            return "hide";
+        }
+
+        if (lower.startsWith("rock") || lower.startsWith("stone"))
+        {
+            return "rock";
+        }
+
+        if (lower.startsWith("ore"))
+        {
+            return "ore";
+        }
+
+        return null;
+    }
+
+    /**
+     * 静态资源是否显示。
+     * 同时兼容旧设置页的全局等级/附魔开关（AND），矩阵是新的细粒度控制。
+     */
+    public boolean isStaticResourceEnabled(String kind, int tier, int enchant)
+    {
+        String normalized = normalizeKind(kind);
+
+        if (normalized == null)
+        {
+            return true;
+        }
+
+        if (tier >= 1 && tier <= MATRIX_TIERS && !harvestingTiers[tier - 1])
+        {
+            return false;
+        }
+
+        if (enchant >= 0 && enchant < harvestingEnchants.length && !harvestingEnchants[enchant])
+        {
+            return false;
+        }
+
+        return isMatrixCellVisible(getResourceMatrix(false, normalized), tier, enchant);
+    }
+
+    /**
+     * 活体资源（资源怪）是否显示。
+     * PC 语义：living resource 属资源页，按 类别 + 等级/附魔矩阵 控制；
+     * 未知 tier/enchant 时默认显示（此前按怪物等级矩阵过滤会把它们滤掉）。
+     */
+    public boolean isLivingResourceEnabled(String kind, int tier, int enchant)
+    {
+        String normalized = normalizeKind(kind);
+
+        if (normalized == null)
+        {
+            return true;
+        }
+
+        return isMatrixCellVisible(getResourceMatrix(true, normalized), tier, enchant);
+    }
+
+    private static boolean isMatrixCellVisible(boolean[][] matrix, int tier, int enchant)
+    {
+        // 未知等级/附魔：默认显示，避免“解析到了但被静默滤掉”
+        if (tier < 1 || tier > MATRIX_TIERS || enchant < 0 || enchant >= MATRIX_ENCHANTS)
+        {
+            return true;
+        }
+
+        return matrix[enchant][tier - 1];
+    }
+
+    public void setResourceCell(boolean living, String kind, int enchant, int tier, boolean value)
+    {
+        if (enchant < 0 || enchant >= MATRIX_ENCHANTS || tier < 0 || tier >= MATRIX_TIERS)
+        {
+            return;
+        }
+
+        getResourceMatrix(living, kind)[enchant][tier] = value;
+    }
+
+    public void setResourceRow(boolean living, String kind, int enchant, boolean value)
+    {
+        if (enchant < 0 || enchant >= MATRIX_ENCHANTS)
+        {
+            return;
+        }
+
+        boolean[][] matrix = getResourceMatrix(living, kind);
+        Arrays.fill(matrix[enchant], value);
+    }
+
+    public void setResourceColumn(boolean living, String kind, int tier, boolean value)
+    {
+        if (tier < 0 || tier >= MATRIX_TIERS)
+        {
+            return;
+        }
+
+        boolean[][] matrix = getResourceMatrix(living, kind);
+
+        for (int enchant = 0; enchant < MATRIX_ENCHANTS; enchant++)
+        {
+            matrix[enchant][tier] = value;
+        }
+    }
+
+    public void setResourceMatrixAll(boolean living, String kind, boolean value)
+    {
+        boolean[][] matrix = getResourceMatrix(living, kind);
+
+        for (int enchant = 0; enchant < MATRIX_ENCHANTS; enchant++)
+        {
+            Arrays.fill(matrix[enchant], value);
+        }
+    }
+
+    /** 持久化某个类别的静态 + 活体矩阵。 */
+    public void saveResourceMatrices(Context context, String kind)
+    {
+        String normalized = normalizeKind(kind);
+
+        if (normalized == null)
+        {
+            return;
+        }
+
+        SharedPreferences preferences = PreferenceManager.getDefaultSharedPreferences(context);
+        SharedPreferences.Editor editor = preferences.edit();
+        editor.putString("resStatic_" + normalized, packMatrix(getResourceMatrix(false, normalized)));
+        editor.putString("resLiving_" + normalized, packMatrix(getResourceMatrix(true, normalized)));
+        editor.apply();
+    }
+
+    public static void putBoolean(Context context, String key, boolean value)
+    {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putBoolean(key, value).apply();
+    }
+
+    public static void putInt(Context context, String key, int value)
+    {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putInt(key, value).apply();
+    }
+
+    public static void putFloat(Context context, String key, float value)
+    {
+        PreferenceManager.getDefaultSharedPreferences(context).edit().putFloat(key, value).apply();
+    }
+
     private RadarSettings()
     {
-        // Initialize settings here
+        // 先给矩阵一个“全开”的默认值：即使 init() 还没被调用（或在 Service 上下文里），渲染也不会 NPE
+        for (String kind : RESOURCE_KIND_KEYS)
+        {
+            boolean[][] staticMatrix = new boolean[MATRIX_ENCHANTS][MATRIX_TIERS];
+            boolean[][] livingMatrix = new boolean[MATRIX_ENCHANTS][MATRIX_TIERS];
+
+            for (int enchant = 0; enchant < MATRIX_ENCHANTS; enchant++)
+            {
+                Arrays.fill(staticMatrix[enchant], true);
+                Arrays.fill(livingMatrix[enchant], true);
+            }
+
+            staticResourceMatrix.put(kind, staticMatrix);
+            livingResourceMatrix.put(kind, livingMatrix);
+        }
     }
 
     public boolean isInChests(String name)

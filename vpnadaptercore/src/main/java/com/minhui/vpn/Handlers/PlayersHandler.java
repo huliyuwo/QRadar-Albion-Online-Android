@@ -19,10 +19,132 @@ public class PlayersHandler
     ArrayList<Player> playersInRange = new ArrayList<>();
     private Player localPlayer;
 
+    /** 本地玩家坐标最后一次变化的时刻（用于判断“静止”，反推玩家坐标 XorCode）。 */
+    private volatile long localPosLastChangeMs = System.currentTimeMillis();
+
     public PlayersHandler()
     {
         playersInRange = new ArrayList<>();
         localPlayer = new Player();
+    }
+
+    /** 本地玩家坐标距上次变化的毫秒数。 */
+    public long localPlayerPosAgeMs()
+    {
+        return System.currentTimeMillis() - localPosLastChangeMs;
+    }
+
+    /**
+     * 增量添加/更新一个“发现的玩家”。
+     *
+     * <p>NewCharacter 会重复下发（换图/重新进入视野），旧实现每次都 add 一个新对象，
+     * 列表会重复膨胀且坐标永远是 (0,0)。这里按 id 合并。
+     *
+     * @param hasPosition 是否已有可用坐标（Move 事件解出来之前为 false）
+     */
+    public void addOrUpdatePlayer(int id, String nickname, String guildName, String allianceName,
+                                  int faction, float currentHealth, float maxHealth,
+                                  boolean hasPosition, float posX, float posY)
+    {
+        SharedLocks.playerHandlerLock.writeLock().lock();
+
+        try
+        {
+            for (Player player : playersInRange)
+            {
+                if (player.getId() == id)
+                {
+                    if (nickname != null && !"null".equals(nickname) && !nickname.isEmpty())
+                    {
+                        player.nickname = nickname;
+                    }
+
+                    if (guildName != null && !"null".equals(guildName) && !guildName.isEmpty())
+                    {
+                        player.guild = guildName;
+                    }
+
+                    if (allianceName != null && !"null".equals(allianceName) && !allianceName.isEmpty())
+                    {
+                        player.alliance = allianceName;
+                    }
+
+                    player.setFaction(faction);
+
+                    if (maxHealth > 0)
+                    {
+                        player.setHealthSnapshot(currentHealth, maxHealth);
+                    }
+
+                    if (hasPosition)
+                    {
+                        player.setPosX(posX);
+                        player.setPosY(posY);
+                        player.positionKnown = true;
+                    }
+
+                    return;
+                }
+            }
+
+            Player player = new Player(id, posX, posY, nickname, guildName, currentHealth, maxHealth, 0, 0, null);
+            player.alliance = allianceName;
+            player.setFaction(faction);
+            player.positionKnown = hasPosition;
+            playersInRange.add(player);
+
+            if (diagAddCount++ < 20)
+            {
+                Log.d("RadarDiag", "player added id=" + id + " name=" + nickname + " guild=" + guildName
+                        + " alliance=" + allianceName + " faction=" + faction
+                        + " total=" + playersInRange.size());
+            }
+        }
+        finally
+        {
+            SharedLocks.playerHandlerLock.writeLock().unlock();
+        }
+    }
+
+    private static int diagAddCount;
+    private static int diagRemoveCount;
+
+    /** 已发现的玩家数量（不代表都能上雷达，坐标加密的只能算“发现”）。 */
+    public int playerCount()
+    {
+        SharedLocks.playerHandlerLock.readLock().lock();
+
+        try
+        {
+            return playersInRange.size();
+        }
+        finally
+        {
+            SharedLocks.playerHandlerLock.readLock().unlock();
+        }
+    }
+
+    /** id 是否是已发现的玩家（用于区分 Move 事件是怪还是玩家）。 */
+    public boolean containsPlayer(int id)
+    {
+        SharedLocks.playerHandlerLock.readLock().lock();
+
+        try
+        {
+            for (Player player : playersInRange)
+            {
+                if (player.getId() == id)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+        finally
+        {
+            SharedLocks.playerHandlerLock.readLock().unlock();
+        }
     }
 
     public  ArrayList<Player> getPlayersInRange()
@@ -80,7 +202,12 @@ public class PlayersHandler
 
         try
         {
-            playersInRange.removeIf(player -> player.getId() == id);
+            boolean removed = playersInRange.removeIf(player -> player.getId() == id);
+
+            if (removed && diagRemoveCount++ < 20)
+            {
+                Log.d("RadarDiag", "player removed id=" + id + " total=" + playersInRange.size());
+            }
         }
         finally
         {
@@ -92,6 +219,11 @@ public class PlayersHandler
     {
         synchronized (SharedLocks.localPlayerLock)
         {
+            if (posX != localPlayer.getPosX() || posY != localPlayer.getPosY())
+            {
+                localPosLastChangeMs = System.currentTimeMillis();
+            }
+
             localPlayer.setPosX(posX);
             localPlayer.setPosY(posY);
 
@@ -114,6 +246,11 @@ public class PlayersHandler
         {
             if (localPlayer.getId() == id)
             {
+                if (posX != localPlayer.getPosX() || posY != localPlayer.getPosY())
+                {
+                    localPosLastChangeMs = System.currentTimeMillis();
+                }
+
                 localPlayer.setPosX(posX);
                 localPlayer.setPosY(posY);
             }
@@ -135,6 +272,17 @@ public class PlayersHandler
         synchronized (SharedLocks.localPlayerLock)
         {
             return localPlayer.getGuild();
+        }
+    }
+
+    public void updateLocalPlayerAlliance(String allianceName)
+    {
+        synchronized (SharedLocks.localPlayerLock)
+        {
+            if (allianceName != null && !allianceName.isEmpty())
+            {
+                localPlayer.setAlliance(allianceName);
+            }
         }
     }
 
@@ -191,6 +339,7 @@ public class PlayersHandler
                 {
                     player.setPosX(posX);
                     player.setPosY(posY);
+                    player.positionKnown = true;
                 }
             }
         }
@@ -223,6 +372,27 @@ public class PlayersHandler
         }
     }
 
+    public void updatePlayerMaxHealth(int id, float maxHealth)
+    {
+        SharedLocks.playerHandlerLock.writeLock().lock();
+
+        try
+        {
+            for (Player player : playersInRange)
+            {
+                if (player.getId() == id)
+                {
+                    player.setHealthSnapshot(player.getCurrentHealth(), maxHealth);
+                    break;
+                }
+            }
+        }
+        finally
+        {
+            SharedLocks.playerHandlerLock.writeLock().unlock();
+        }
+    }
+
 
     public void clear()
     {
@@ -230,6 +400,7 @@ public class PlayersHandler
 
         try
         {
+            Log.d("RadarDiag", "players CLEARED, was=" + playersInRange.size());
             playersInRange.clear();
         }
         finally

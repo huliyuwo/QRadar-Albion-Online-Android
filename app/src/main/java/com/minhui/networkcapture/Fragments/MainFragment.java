@@ -35,12 +35,15 @@ public class MainFragment extends Fragment
         titles = new ArrayList<>();
         images = new ArrayList<>();
 
+        // 第一张卡片是 PC 式「渲染选项」统一入口（资源/敌人/玩家/箱子/雷达显示分组）
+        titles.add(getString(R.string.qr_render_options));
         titles.add(getString(R.string.qr_pvp));
         titles.add(getString(R.string.qr_harvest_card));
         titles.add(getString(R.string.qr_mobs));
         titles.add(getString(R.string.qr_chests));
         titles.add(getString(R.string.qr_settings));
 
+        images.add(R.drawable.qradarlogo);
         images.add(R.drawable.pvp);
         images.add(R.drawable.wheat);
         images.add(R.drawable.devil);

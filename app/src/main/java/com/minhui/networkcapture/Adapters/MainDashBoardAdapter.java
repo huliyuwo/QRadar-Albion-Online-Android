@@ -17,6 +17,7 @@ import com.minhui.networkcapture.RadarActivities.ChestsActivity;
 import com.minhui.networkcapture.RadarActivities.HarvestingActivity;
 import com.minhui.networkcapture.RadarActivities.MobsActivity;
 import com.minhui.networkcapture.RadarActivities.PvPActivity;
+import com.minhui.networkcapture.RadarActivities.RenderOptionsActivity;
 import com.minhui.networkcapture.RadarActivities.SettingsActivity;
 
 import java.util.List;
@@ -72,26 +73,32 @@ public class MainDashBoardAdapter extends RecyclerView.Adapter<MainDashBoardAdap
                 switch (getAdapterPosition())
                 {
                     case 0:
+                        // PC 式「渲染选项」统一入口
+                        Intent renderOptionsActivity = new Intent(mContext, RenderOptionsActivity.class);
+                        mContext.startActivity(renderOptionsActivity);
+                        break;
+
+                    case 1:
                         Intent playerPvPActivity = new Intent(mContext, PvPActivity.class);
                         mContext.startActivity(playerPvPActivity);
                         break;
 
-                    case 1:
+                    case 2:
                         Intent playerHarvestingActivity = new Intent(mContext, HarvestingActivity.class);
                         mContext.startActivity(playerHarvestingActivity);
                         break;
 
-                    case 2:
+                    case 3:
                         Intent mobsActivity = new Intent(mContext, MobsActivity.class);
                         mContext.startActivity(mobsActivity);
                         break;
 
-                    case 3:
+                    case 4:
                         Intent chestsActivity = new Intent(mContext, ChestsActivity.class);
                         mContext.startActivity(chestsActivity);
                         break;
 
-                    case 4:
+                    case 5:
                         Intent settingsActivity = new Intent(mContext, SettingsActivity.class);
                         mContext.startActivity(settingsActivity);
                         break;

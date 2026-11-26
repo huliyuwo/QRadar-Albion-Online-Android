@@ -26,6 +26,7 @@ import org.greenrobot.eventbus.Subscribe;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 
 /**
  * 雷达视窗（直绘渲染器）。
@@ -68,6 +69,7 @@ public class RadarView extends View
     private static final int COLOR_PLAYER_GUILD = 0xFF43A047;
     private static final int COLOR_PLAYER_ALLIANCE = 0xFF8E24AA;
     private static final int COLOR_PLAYER_FACTION = 0xFFFB8C00;
+    private static final int COLOR_PLAYER_HOSTILE = 0xFFE53935;
     private static final int COLOR_PLAYER_OTHER = 0xFF2979FF;
     private static final int COLOR_SELF = 0xFF29B6F6;
 
@@ -128,6 +130,15 @@ public class RadarView extends View
     private final HashMap<String, Bitmap> iconCache = new HashMap<>();
     private int iconCacheSizePx;
 
+    /** 资源聚类：cell key -> {count, sumX, sumY, kindIndex, living}（按帧重建）。 */
+    private final HashMap<Long, float[]> clusterStats = new HashMap<>();
+    private final HashSet<Long> drawnClusterKeys = new HashSet<>();
+
+    private final Paint clusterTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint panelBackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint panelTextPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint playerRingPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+
     private long lastDiagLogTime;
     private long lastTrimTime;
     private long lastDrawnLogTime;
@@ -138,6 +149,9 @@ public class RadarView extends View
     private int lastDrawnPlayers;
     private int lastDrawnChests;
     private int lastDrawnFishing;
+    /** 活体资源点位日志限流。 */
+    private int livingDiagCount;
+    private long lastPlayerDiagTime;
 
     /** 怪物血量没有 max 字段：用首次观测值作为满血基准，便于画比例血条。 */
     private final HashMap<Integer, Integer> mobMaxHealth = new HashMap<>();
@@ -226,6 +240,23 @@ public class RadarView extends View
 
         hudBackPaint.setColor(0x99000000);
         hudBackPaint.setStyle(Paint.Style.FILL);
+
+        clusterTextPaint.setAntiAlias(true);
+        clusterTextPaint.setColor(0xFFFFFFFF);
+        clusterTextPaint.setTextAlign(Paint.Align.CENTER);
+        clusterTextPaint.setTypeface(Typeface.DEFAULT_BOLD);
+
+        panelBackPaint.setColor(0xB3000000);
+        panelBackPaint.setStyle(Paint.Style.FILL);
+
+        panelTextPaint.setAntiAlias(true);
+        panelTextPaint.setColor(0xFFFFFFFF);
+        panelTextPaint.setTextAlign(Paint.Align.LEFT);
+        panelTextPaint.setTypeface(Typeface.MONOSPACE);
+
+        playerRingPaint.setStyle(Paint.Style.STROKE);
+        playerRingPaint.setStrokeWidth(2.5f);
+        playerRingPaint.setAntiAlias(true);
 
         drawPlayers.init(this);
         drawMobs.init(this);
@@ -347,44 +378,6 @@ public class RadarView extends View
                 && !(x == 0f && y == 0f);
     }
 
-    /** 名称里的资源类别（与 PC 版 getResourceCategory 一致的语义）。 */
-    private static String resourceKindOf(String name)
-    {
-        if (name == null)
-        {
-            return null;
-        }
-
-        String n = name.toLowerCase();
-
-        if (n.contains("fiber"))
-        {
-            return "fiber";
-        }
-
-        if (n.contains("hide"))
-        {
-            return "hide";
-        }
-
-        if (n.contains("wood") || n.contains("log"))
-        {
-            return "log";
-        }
-
-        if (n.contains("ore"))
-        {
-            return "ore";
-        }
-
-        if (n.contains("rock"))
-        {
-            return "rock";
-        }
-
-        return null;
-    }
-
     /** 采集物 type 数字 -> 资源类别（PC 版 HarvestablesDrawing 的 type 区间回退逻辑）。 */
     private static String resourceKindOfType(int type)
     {
@@ -423,13 +416,13 @@ public class RadarView extends View
             return COLOR_RES_UNKNOWN;
         }
 
-        switch (kind)
+        switch (RadarSettings.normalizeKind(kind) == null ? "" : RadarSettings.normalizeKind(kind))
         {
             case "fiber":
                 return COLOR_RES_FIBER;
             case "hide":
                 return COLOR_RES_HIDE;
-            case "log":
+            case "wood":
                 return COLOR_RES_WOOD;
             case "ore":
                 return COLOR_RES_ORE;
@@ -438,6 +431,183 @@ public class RadarView extends View
             default:
                 return COLOR_RES_UNKNOWN;
         }
+    }
+
+    /** 类别 -> RadarSettings.RESOURCE_KIND_KEYS 下标；未知返回 -1。 */
+    private static int kindIndex(String kind)
+    {
+        String normalized = RadarSettings.normalizeKind(kind);
+
+        if (normalized == null)
+        {
+            return -1;
+        }
+
+        for (int i = 0; i < RadarSettings.RESOURCE_KIND_KEYS.length; i++)
+        {
+            if (RadarSettings.RESOURCE_KIND_KEYS[i].equals(normalized))
+            {
+                return i;
+            }
+        }
+
+        return -1;
+    }
+
+    private static int kindColor(int kindIndex)
+    {
+        if (kindIndex < 0 || kindIndex >= RadarSettings.RESOURCE_KIND_KEYS.length)
+        {
+            return COLOR_RES_UNKNOWN;
+        }
+
+        return resourceCategoryColor(RadarSettings.RESOURCE_KIND_KEYS[kindIndex]);
+    }
+
+    // ------------------------------------------------------------------
+    // 资源聚类（PC settingRadarResourceClusters 语义）
+    // ------------------------------------------------------------------
+    private long clusterKey(float worldX, float worldY, int kindIdx, boolean living)
+    {
+        int radius = Math.max(5, RadarSettings.getInstance().radarClusterRadius);
+        long cellX = (long) Math.floor(worldX / radius) & 0xFFFFFL;
+        long cellY = (long) Math.floor(worldY / radius) & 0xFFFFFL;
+        long key = cellX | (cellY << 20) | (((long) (kindIdx + 1)) & 0x7L) << 40;
+
+        if (living)
+        {
+            key |= 1L << 44;
+        }
+
+        return key;
+    }
+
+    /** 按帧预统计聚类单元（静态资源 + 活体资源按类别、分静态/活体统计）。 */
+    private void prepareResourceClusters(RadarSettings settings)
+    {
+        clusterStats.clear();
+        drawnClusterKeys.clear();
+
+        if (!settings.radarClusters)
+        {
+            return;
+        }
+
+        MainHandler handler = MainHandler.getInstance();
+
+        for (Harvestable harvestable : handler.harvestablesHandler.getHarvestableList())
+        {
+            String kind = visibleStaticKind(settings, harvestable);
+
+            if (kind == null)
+            {
+                continue;
+            }
+
+            accumulateCluster(harvestable.getPosX(), harvestable.getPosY(), kindIndex(kind), false);
+        }
+
+        for (Mob mob : handler.mobsHandler.getMobList())
+        {
+            MobCodes type = mob.getType() == null ? MobCodes.Enemy : mob.getType();
+
+            if (!isLivingResourceType(type) || !isGroundPosition(mob.getPosX(), mob.getPosY())
+                    || !isLivingResourceVisible(settings, mob, type))
+            {
+                continue;
+            }
+
+            accumulateCluster(mob.getPosX(), mob.getPosY(), kindIndex(livingKindOf(mob)), true);
+        }
+    }
+
+    private void accumulateCluster(float worldX, float worldY, int kindIdx, boolean living)
+    {
+        long key = clusterKey(worldX, worldY, kindIdx, living);
+        float[] stats = clusterStats.get(key);
+
+        if (stats == null)
+        {
+            stats = new float[]{0f, 0f, 0f, kindIdx, living ? 1f : 0f};
+            clusterStats.put(key, stats);
+        }
+
+        stats[0] += 1f;
+        stats[1] += worldX;
+        stats[2] += worldY;
+    }
+
+    /** 该实体是否被聚类吸收（聚类开启且同格数量 >= 阈值时不在原位单独画）。 */
+    private boolean isClusterMember(RadarSettings settings, float worldX, float worldY,
+                                    int kindIdx, boolean living)
+    {
+        if (!settings.radarClusters)
+        {
+            return false;
+        }
+
+        float[] stats = clusterStats.get(clusterKey(worldX, worldY, kindIdx, living));
+
+        return stats != null && stats[0] >= Math.max(2, settings.radarClusterMinSize);
+    }
+
+    /** 画聚类点（一个类别色块 + 数量），并返回画了几个。 */
+    private int drawResourceClusters(Canvas canvas, RadarSettings settings, float lpX, float lpY,
+                                     float k, float cx, float cy, int width, int height)
+    {
+        if (!settings.radarClusters || clusterStats.isEmpty())
+        {
+            return 0;
+        }
+
+        float iconPx = iconSize(width);
+        float half = iconPx / 2f;
+        float margin = iconPx + 8f;
+        int drawn = 0;
+
+        for (HashMap.Entry<Long, float[]> entry : clusterStats.entrySet())
+        {
+            float[] stats = entry.getValue();
+
+            if (stats[0] < Math.max(2, settings.radarClusterMinSize))
+            {
+                continue;
+            }
+
+            float worldX = stats[1] / stats[0];
+            float worldY = stats[2] / stats[0];
+            int kindIdx = (int) stats[3];
+            boolean living = stats[4] > 0.5f;
+
+            projectToScreen(worldX, worldY, lpX, lpY, k, cx, cy, tmpScreen);
+
+            if (!isOnScreen(tmpScreen[0], tmpScreen[1], width, height, margin))
+            {
+                continue;
+            }
+
+            int color = kindColor(kindIdx);
+            entityPaint.setColor(color);
+            tmpIconRect.set(tmpScreen[0] - half, tmpScreen[1] - half,
+                    tmpScreen[0] + half, tmpScreen[1] + half);
+            canvas.drawRect(tmpIconRect, entityPaint);
+
+            if (living)
+            {
+                borderPaint.setColor(COLOR_MOB_LIVING);
+                canvas.drawRect(tmpIconRect, borderPaint);
+                borderPaint.setColor(getContext().getColor(R.color.colorBlue));
+            }
+
+            clusterTextPaint.setTextSize(Math.max(10f, iconPx * 0.55f));
+            clusterTextPaint.setColor(0xFFFFFFFF);
+            canvas.drawText("x" + (int) stats[0], tmpScreen[0], tmpScreen[1] + iconPx * 0.24f,
+                    clusterTextPaint);
+
+            drawn++;
+        }
+
+        return drawn;
     }
 
     /** 按 PC 命名（log_4_0 / ore_8_2 ...）取 drawable，缺失返回 null。 */
@@ -534,8 +704,13 @@ public class RadarView extends View
         final float cx = width / 2f;
         final float cy = height / 2f;
         final float radius = Math.min(width, height) * 0.06f;
+        final RadarSettings settings = RadarSettings.getInstance();
 
-        canvas.drawRoundRect(0, 0, width, height, radius, radius, backgroundPaint);
+        if (settings.radarShowBackground)
+        {
+            canvas.drawRoundRect(0, 0, width, height, radius, radius, backgroundPaint);
+        }
+
         canvas.drawRoundRect(1.5f, 1.5f, width - 1.5f, height - 1.5f, radius, radius, borderPaint);
 
         canvas.save();
@@ -570,7 +745,13 @@ public class RadarView extends View
 
         final float k = getPxPerUnit(width);
 
-        drawRangeRings(canvas, cx, cy, k);
+        if (settings.radarShowRings)
+        {
+            drawRangeRings(canvas, cx, cy, k);
+        }
+
+        // 聚类预统计（开启时才遍历，60fps 下开销可控）
+        prepareResourceClusters(settings);
 
         int drawnHarvest = 0;
         int drawnMobs = 0;
@@ -623,10 +804,30 @@ public class RadarView extends View
             logSectionFailure("fishing", e);
         }
 
+        try
+        {
+            drawnHarvest += drawResourceClusters(canvas, settings, lpX, lpY, k, cx, cy, width, height);
+        }
+        catch (Throwable e)
+        {
+            logSectionFailure("clusters", e);
+        }
+
         // 自己：相机跟随，永远在视窗中心
         float selfRadius = Math.max(7f, width * 0.016f);
         canvas.drawCircle(cx, cy, selfRadius, selfPaint);
         canvas.drawCircle(cx, cy, selfRadius + Math.max(5f, width * 0.012f), selfRingPaint);
+
+        ArrayList<Player> detectedPlayers = handler.playersHandler.getPlayersInRange();
+
+        try
+        {
+            drawPlayerPanel(canvas, width, height, detectedPlayers);
+        }
+        catch (Throwable e)
+        {
+            logSectionFailure("playerPanel", e);
+        }
 
         lastDrawnHarvest = drawnHarvest;
         lastDrawnMobs = drawnMobs;
@@ -634,15 +835,22 @@ public class RadarView extends View
         lastDrawnChests = drawnChests;
         lastDrawnFishing = drawnFishing;
 
-        drawHud(canvas, width, height, drawnHarvest, drawnMobs, drawnPlayers);
+        if (settings.radarShowHud)
+        {
+            drawHud(canvas, width, height, drawnHarvest, drawnMobs, detectedPlayers.size(),
+                    drawnPlayers);
+        }
 
         if (now - lastDrawnLogTime >= 2000)
         {
             lastDrawnLogTime = now;
             Log.d(TAG, "direct drawn h=" + drawnHarvest + " m=" + drawnMobs + " p=" + drawnPlayers
                     + " c=" + drawnChests + " f=" + drawnFishing
+                    + " detectedPlayers=" + detectedPlayers.size()
+                    + " xorReady=" + com.minhui.vpn.PhotonPackageParser.classes.PlayerMoveDecoder.isReady()
                     + " lp=" + lpX + "," + lpY + " k=" + k
-                    + " zoom=" + RadarSettings.getInstance().radarScaleBar);
+                    + " zoom=" + settings.radarScaleBar
+                    + " badges=" + settings.radarTierBadges + " icon=" + settings.radarIconScale);
         }
 
         canvas.restore();
@@ -702,35 +910,15 @@ public class RadarView extends View
 
         for (Harvestable harvestable : harvestables)
         {
-            if (!isGroundPosition(harvestable.getPosX(), harvestable.getPosY()))
+            String kind = visibleStaticKind(settings, harvestable);
+
+            if (kind == null)
             {
                 continue;
             }
 
-            if (harvestable.getCharges() <= 0)
-            {
-                // PC 版同样跳过 size<=0 的已被采完的节点
-                continue;
-            }
-
-            int type = harvestable.getType();
-            String kind = resourceKindOfType(type);
-
-            if (kind == null || !settings.isHarvestableTypeEnabled(type))
-            {
-                continue;
-            }
-
-            // 解析层 tier 是 0 基（T2 资源 tier=1），显示层统一换算成 1..8
             int tier = Math.max(1, Math.min(8, harvestable.getTier() + 1));
             int enchant = Math.max(0, Math.min(4, harvestable.getEnchant()));
-
-            if (!settings.harvestingTiers[tier - 1]
-                    || enchant >= settings.harvestingEnchants.length
-                    || !settings.harvestingEnchants[enchant])
-            {
-                continue;
-            }
 
             projectToScreen(harvestable.getPosX(), harvestable.getPosY(), lpX, lpY, k, cx, cy, tmpScreen);
 
@@ -739,37 +927,116 @@ public class RadarView extends View
                 continue;
             }
 
-            Bitmap icon = getResourceIcon(kind, tier, enchant, (int) iconPx);
-
-            if (icon != null)
+            if (isClusterMember(settings, harvestable.getPosX(), harvestable.getPosY(),
+                    kindIndex(kind), false))
             {
-                tmpIconRect.set(tmpScreen[0] - half, tmpScreen[1] - half,
-                        tmpScreen[0] + half, tmpScreen[1] + half);
-                canvas.drawBitmap(icon, null, tmpIconRect, null);
-            }
-            else
-            {
-                // 缺图兜底：按资源类别画彩色方块，而不是什么都不画
-                entityPaint.setColor(resourceCategoryColor(kind));
-                tmpIconRect.set(tmpScreen[0] - half, tmpScreen[1] - half,
-                        tmpScreen[0] + half, tmpScreen[1] + half);
-                canvas.drawRect(tmpIconRect, entityPaint);
+                continue;
             }
 
-            drawTierBadge(canvas, tmpScreen[0], tmpScreen[1], iconPx, resourceCategoryColor(kind), tier, enchant, false);
-
-            if (settings.harvestingSize)
-            {
-                entityTextPaint.setColor(0xFFE0E0E0);
-                entityTextPaint.setTextSize(Math.max(9f, iconPx * 0.38f));
-                canvas.drawText(String.valueOf(harvestable.getCharges()),
-                        tmpScreen[0], tmpScreen[1] + iconPx * 0.85f, entityTextPaint);
-            }
+            drawResourceMarker(canvas, tmpScreen[0], tmpScreen[1], iconPx, kind, tier, enchant,
+                    false, width, harvestable.getCharges(), lpX, lpY,
+                    harvestable.getPosX(), harvestable.getPosY());
 
             drawn++;
         }
 
         return drawn;
+    }
+
+    /** 画一个资源/活体资源标记（图标或色块 + 等级角标 + 可选数量/距离）。 */
+    private void drawResourceMarker(Canvas canvas, float screenX, float screenY, float iconPx,
+                                    String kind, int tier, int enchant, boolean living, int width,
+                                    int charges, float lpX, float lpY, float worldX, float worldY)
+    {
+        RadarSettings settings = RadarSettings.getInstance();
+        float half = iconPx / 2f;
+        int categoryColor = resourceCategoryColor(kind);
+
+        if (settings.radarTierBadges)
+        {
+            // PC 的“等级色块角标”模式：不画图标，直接按类别色块 + T/E 角标
+            entityPaint.setColor(categoryColor);
+            tmpIconRect.set(screenX - half, screenY - half, screenX + half, screenY + half);
+            canvas.drawRect(tmpIconRect, entityPaint);
+        }
+        else
+        {
+            Bitmap icon = getResourceIcon(kind, tier, enchant, (int) iconPx);
+
+            if (icon != null)
+            {
+                tmpIconRect.set(screenX - half, screenY - half, screenX + half, screenY + half);
+                canvas.drawBitmap(icon, null, tmpIconRect, null);
+            }
+            else
+            {
+                // 缺图兜底：按资源类别画彩色方块，而不是什么都不画
+                entityPaint.setColor(categoryColor);
+                tmpIconRect.set(screenX - half, screenY - half, screenX + half, screenY + half);
+                canvas.drawRect(tmpIconRect, entityPaint);
+            }
+        }
+
+        if (living)
+        {
+            // 活体资源金框（PC 版 isLiving 的金色描边）
+            borderPaint.setColor(COLOR_MOB_LIVING);
+            tmpRect.set(screenX - half, screenY - half, screenX + half, screenY + half);
+            canvas.drawRect(tmpRect, borderPaint);
+            borderPaint.setColor(getContext().getColor(R.color.colorBlue));
+        }
+
+        drawTierBadge(canvas, screenX, screenY, iconPx, living ? COLOR_MOB_LIVING : categoryColor,
+                tier, enchant, living);
+
+        float textY = screenY + iconPx * 0.85f;
+        entityTextPaint.setColor(0xFFE0E0E0);
+        entityTextPaint.setTextSize(Math.max(9f, iconPx * 0.38f));
+
+        if (settings.radarResourceCount || settings.harvestingSize)
+        {
+            if (charges > 0)
+            {
+                canvas.drawText(String.valueOf(charges), screenX, textY, entityTextPaint);
+                textY += iconPx * 0.32f;
+            }
+        }
+
+        if (settings.radarResourceDistance)
+        {
+            float distance = (float) Math.hypot(worldX - lpX, worldY - lpY);
+            entityTextPaint.setColor(0xFFB0BEC5);
+            canvas.drawText(Math.round(distance) + "m", screenX, textY, entityTextPaint);
+        }
+    }
+
+    /** 静态资源可见性：不可见返回 null，可见返回统一类别 key（wood/rock/fiber/hide/ore）。 */
+    private String visibleStaticKind(RadarSettings settings, Harvestable harvestable)
+    {
+        if (!isGroundPosition(harvestable.getPosX(), harvestable.getPosY()))
+        {
+            return null;
+        }
+
+        if (harvestable.getCharges() <= 0)
+        {
+            // PC 版同样跳过 size<=0 的已被采完的节点
+            return null;
+        }
+
+        int type = harvestable.getType();
+        String kind = RadarSettings.normalizeKind(resourceKindOfType(type));
+
+        if (kind == null || !settings.isHarvestableTypeEnabled(type))
+        {
+            return null;
+        }
+
+        // 解析层 tier 是 0 基（T2 资源 tier=1），显示层统一换算成 1..8
+        int tier = Math.max(1, Math.min(8, harvestable.getTier() + 1));
+        int enchant = Math.max(0, Math.min(4, harvestable.getEnchant()));
+
+        return settings.isStaticResourceEnabled(kind, tier, enchant) ? kind : null;
     }
 
     // ------------------------------------------------------------------
@@ -801,70 +1068,81 @@ public class RadarView extends View
                 type = MobCodes.Enemy;
             }
 
-            boolean isLivingResource = type == MobCodes.Harvestable || type == MobCodes.Skinnable;
-            int color;
-            boolean show;
+            int tier = mob.getTier();
+            int enchant = mob.getEnchantmentLevel();
+            int clampedTier = Math.max(0, Math.min(8, tier));
+            int clampedEnchant = Math.max(0, Math.min(4, enchant));
 
-            if (isLivingResource)
+            if (isLivingResourceType(type))
             {
-                boolean typeEnabled = type == MobCodes.Harvestable ? settings.mobHarvestable : settings.mobSkinnable;
-                int tier = mob.getTier();
-                int enchant = Math.max(0, Math.min(4, mob.getEnchantmentLevel()));
-                boolean tierOk = tier >= 1 && tier <= settings.mobTiers.length && settings.mobTiers[tier - 1];
-                boolean enchantOk = enchant < settings.mobEnchants.length && settings.mobEnchants[enchant];
-
-                show = typeEnabled && tierOk && enchantOk;
-                color = COLOR_MOB_LIVING;
-            }
-            else
-            {
-                switch (type)
+                // 活体资源（资源怪）：PC 语义 = 资源页的 Living 子项，按 类别 + 等级/附魔矩阵 控制；
+                // 未知 tier/enchant 默认显示（此前套用怪物等级矩阵，会把这类实体静默滤掉）。
+                if (!isLivingResourceVisible(settings, mob, type))
                 {
-                    case Boss:
-                        show = settings.mobBoss;
-                        color = COLOR_MOB_BOSS;
-                        break;
-                    case MiniBoss:
-                        show = settings.mobBoss || settings.mobOther;
-                        color = COLOR_MOB_MINIBOSS;
-                        break;
-                    case EnchantedEnemy:
-                        show = settings.mobOther;
-                        color = COLOR_MOB_ENCHANTED;
-                        break;
-                    case MediumEnemy:
-                        show = settings.mobOther;
-                        color = COLOR_MOB_MEDIUM;
-                        break;
-                    case Drone:
-                        show = settings.mobOther;
-                        color = COLOR_MOB_DRONE;
-                        break;
-                    case MistBoss:
-                        show = settings.mobOther;
-                        color = COLOR_MOB_MISTBOSS;
-                        break;
-                    case Events:
-                        show = settings.mobOther;
-                        color = COLOR_MOB_EVENTS;
-                        break;
-                    case Guard:
-                        show = settings.mobOther;
-                        color = COLOR_MOB_GUARD;
-                        break;
-                    case MistPortal:
-                        show = settings.mobOther;
-                        color = COLOR_MOB_PORTAL;
-                        break;
-                    case Enemy:
-                    default:
-                        show = settings.mobOther;
-                        color = COLOR_MOB_ENEMY;
-                        break;
+                    continue;
                 }
+
+                String kind = livingKindOf(mob);
+
+                projectToScreen(mob.getPosX(), mob.getPosY(), lpX, lpY, k, cx, cy, tmpScreen);
+
+                if (!isOnScreen(tmpScreen[0], tmpScreen[1], width, height, margin))
+                {
+                    continue;
+                }
+
+                if (isClusterMember(settings, mob.getPosX(), mob.getPosY(), kindIndex(kind), true))
+                {
+                    continue;
+                }
+
+                if (kind != null)
+                {
+                    drawResourceMarker(canvas, tmpScreen[0], tmpScreen[1], iconPx, kind,
+                            clampedTier, clampedEnchant, true, width, 0, lpX, lpY,
+                            mob.getPosX(), mob.getPosY());
+                }
+                else
+                {
+                    // 未知类别（权威表未收录的活体资源）：金色圆点 + 已知等级角标兜底
+                    entityPaint.setColor(COLOR_MOB_LIVING);
+                    canvas.drawCircle(tmpScreen[0], tmpScreen[1], baseRadius * 1.4f, entityPaint);
+
+                    if (clampedTier >= 1)
+                    {
+                        drawTierBadge(canvas, tmpScreen[0], tmpScreen[1], iconPx,
+                                COLOR_MOB_LIVING, clampedTier, clampedEnchant, true);
+                    }
+                }
+
+                if (settings.mobHp && mob.getHealth() > 0)
+                {
+                    drawHealthBar(canvas, tmpScreen[0], tmpScreen[1] + iconPx * 0.62f,
+                            mobHealthRatio(mob), width);
+                }
+
+                if (livingDiagCount++ < 25)
+                {
+                    Log.d(TAG, "living drawn id=" + mob.getId() + " typeId=" + mob.getTypeId()
+                            + " kind=" + kind + " tier=" + tier + " enchant=" + enchant
+                            + " pos=" + mob.getPosX() + "," + mob.getPosY());
+                }
+
+                drawn++;
+                continue;
             }
 
-            if (!show)
+            // 普通怪物：PC 的类别开关 + 等级/附魔矩阵（未知等级默认显示）
+            if (!isHostileVisible(settings, type))
+            {
+                continue;
+            }
+
+            boolean tierOk = clampedTier < 1 || settings.mobTiers[clampedTier - 1];
+            boolean enchantOk = enchant < 0 || enchant >= settings.mobEnchants.length
+                    || settings.mobEnchants[clampedEnchant];
+
+            if (!tierOk || !enchantOk)
             {
                 continue;
             }
@@ -876,62 +1154,32 @@ public class RadarView extends View
                 continue;
             }
 
-            if (isLivingResource)
+            int color = hostileColor(type);
+            float radius = baseRadius;
+
+            if (type == MobCodes.Boss || type == MobCodes.MiniBoss)
             {
-                String kind = resourceKindOf(mob.getName());
-                int tier = Math.max(1, Math.min(8, mob.getTier()));
-                int enchant = Math.max(0, Math.min(4, mob.getEnchantmentLevel()));
-                Bitmap icon = kind == null ? null : getResourceIcon(kind, tier, enchant, (int) iconPx);
-
-                if (icon != null)
-                {
-                    tmpIconRect.set(tmpScreen[0] - half, tmpScreen[1] - half,
-                            tmpScreen[0] + half, tmpScreen[1] + half);
-                    canvas.drawBitmap(icon, null, tmpIconRect, null);
-                }
-                else
-                {
-                    entityPaint.setColor(COLOR_MOB_LIVING);
-                    canvas.drawCircle(tmpScreen[0], tmpScreen[1], baseRadius * 1.4f, entityPaint);
-                }
-
-                // 活体资源金框（PC 版 isLiving 时的金色描边）
-                borderPaint.setColor(COLOR_MOB_LIVING);
-                tmpRect.set(tmpScreen[0] - half, tmpScreen[1] - half,
-                        tmpScreen[0] + half, tmpScreen[1] + half);
-                canvas.drawRect(tmpRect, borderPaint);
-                borderPaint.setColor(getContext().getColor(R.color.colorBlue));
-
-                drawTierBadge(canvas, tmpScreen[0], tmpScreen[1], iconPx, COLOR_MOB_LIVING, tier, enchant, true);
+                radius = baseRadius * 1.6f;
             }
-            else
+            else if (type == MobCodes.EnchantedEnemy)
             {
-                float radius = baseRadius;
-
-                if (type == MobCodes.Boss || type == MobCodes.MiniBoss)
-                {
-                    radius = baseRadius * 1.6f;
-                }
-                else if (type == MobCodes.EnchantedEnemy)
-                {
-                    radius = baseRadius * 1.3f;
-                }
-                else if (type == MobCodes.MistBoss)
-                {
-                    radius = baseRadius * 1.5f;
-                }
-
-                entityPaint.setColor(0xB3000000);
-                canvas.drawCircle(tmpScreen[0], tmpScreen[1], radius + 2.5f, entityPaint);
-                entityPaint.setColor(color);
-                canvas.drawCircle(tmpScreen[0], tmpScreen[1], radius, entityPaint);
+                radius = baseRadius * 1.3f;
+            }
+            else if (type == MobCodes.MistBoss)
+            {
+                radius = baseRadius * 1.5f;
             }
 
-            // 血条：怪物开关打开时显示（活体资源同样适用）
+            entityPaint.setColor(0xB3000000);
+            canvas.drawCircle(tmpScreen[0], tmpScreen[1], radius + 2.5f, entityPaint);
+            entityPaint.setColor(color);
+            canvas.drawCircle(tmpScreen[0], tmpScreen[1], radius, entityPaint);
+
+            // 血条：怪物开关打开时显示
             if (settings.mobHp && mob.getHealth() > 0)
             {
-                float hpRatio = mobHealthRatio(mob);
-                drawHealthBar(canvas, tmpScreen[0], tmpScreen[1] + iconPx * 0.62f, hpRatio, width);
+                drawHealthBar(canvas, tmpScreen[0], tmpScreen[1] + baseRadius * 2.4f,
+                        mobHealthRatio(mob), width);
             }
 
             drawn++;
@@ -940,8 +1188,94 @@ public class RadarView extends View
         return drawn;
     }
 
+    private static boolean isLivingResourceType(MobCodes type)
+    {
+        return type == MobCodes.Harvestable || type == MobCodes.Skinnable;
+    }
+
+    /** 活体资源是否显示（资源页 Living 语义 + 类别/等级矩阵，未知等级默认显示）。 */
+    private boolean isLivingResourceVisible(RadarSettings settings, Mob mob, MobCodes type)
+    {
+        boolean typeEnabled = type == MobCodes.Harvestable ? settings.mobHarvestable : settings.mobSkinnable;
+
+        if (!typeEnabled)
+        {
+            return false;
+        }
+
+        String kind = livingKindOf(mob);
+
+        if (kind == null)
+        {
+            // 权威表未收录但被标成活体资源：默认显示，避免“解析到了却看不到”
+            return true;
+        }
+
+        return settings.isLivingResourceEnabled(kind, mob.getTier(), mob.getEnchantmentLevel());
+    }
+
+    private static String livingKindOf(Mob mob)
+    {
+        return RadarSettings.normalizeKind(mob.getName());
+    }
+
+    /** 普通怪物类别开关（PC Enemies 分组）。 */
+    private static boolean isHostileVisible(RadarSettings settings, MobCodes type)
+    {
+        switch (type)
+        {
+            case Boss:
+                return settings.mobBoss;
+            case MiniBoss:
+                return settings.mobMiniBoss;
+            case EnchantedEnemy:
+            case MediumEnemy:
+            case Enemy:
+                return settings.mobEnemy;
+            case Drone:
+                return settings.mobDrone;
+            case MistBoss:
+            case MistPortal:
+                return settings.mobMist;
+            case Events:
+                return settings.mobEvents;
+            case Guard:
+                return settings.mobGuard;
+            default:
+                return settings.mobOther;
+        }
+    }
+
+    private static int hostileColor(MobCodes type)
+    {
+        switch (type)
+        {
+            case Boss:
+                return COLOR_MOB_BOSS;
+            case MiniBoss:
+                return COLOR_MOB_MINIBOSS;
+            case EnchantedEnemy:
+                return COLOR_MOB_ENCHANTED;
+            case MediumEnemy:
+                return COLOR_MOB_MEDIUM;
+            case Drone:
+                return COLOR_MOB_DRONE;
+            case MistBoss:
+                return COLOR_MOB_MISTBOSS;
+            case Events:
+                return COLOR_MOB_EVENTS;
+            case Guard:
+                return COLOR_MOB_GUARD;
+            case MistPortal:
+                return COLOR_MOB_PORTAL;
+            case Enemy:
+            default:
+                return COLOR_MOB_ENEMY;
+        }
+    }
+
     // ------------------------------------------------------------------
-    // 玩家
+    // 玩家（对齐 PC PlayersDrawing：公会绿 / 联盟紫 / 阵营橙 / 敌对红 / 中立蓝）
     // ------------------------------------------------------------------
     private int drawPlayers2(Canvas canvas, float lpX, float lpY, float k,
                              float cx, float cy, int width, int height)
@@ -960,16 +1294,18 @@ public class RadarView extends View
         final float localFaction = handler.playersHandler.localPlayerFaction();
         final float baseRadius = Math.max(5f, width * 0.013f);
         final float margin = baseRadius * 3f;
+        final int maxDisplay = Math.max(1, settings.playerMaxDisplay);
         int drawn = 0;
 
         for (Player player : players)
         {
-            if (drawn > Utils.MaxPlayer)
+            if (drawn >= maxDisplay)
             {
                 break;
             }
 
-            if (!isGroundPosition(player.getPosX(), player.getPosY()))
+            // 坐标还没解出来（玩家坐标是 XOR 加密的）：不瞎画，交给右上角“已发现玩家”面板
+            if (!player.positionKnown || !isGroundPosition(player.getPosX(), player.getPosY()))
             {
                 continue;
             }
@@ -981,6 +1317,13 @@ public class RadarView extends View
                 continue;
             }
 
+            int playerColor = playerColor(player, localGuild, localAlliance, localFaction);
+
+            if (!isPlayerGroupVisible(settings, playerColor))
+            {
+                continue;
+            }
+
             projectToScreen(player.getPosX(), player.getPosY(), lpX, lpY, k, cx, cy, tmpScreen);
 
             if (!isOnScreen(tmpScreen[0], tmpScreen[1], width, height, margin))
@@ -988,30 +1331,17 @@ public class RadarView extends View
                 continue;
             }
 
-            int color = COLOR_PLAYER_OTHER;
-
-            if (localGuild != null && !localGuild.isEmpty() && localGuild.equals(player.getGuild()))
-            {
-                color = COLOR_PLAYER_GUILD;
-            }
-            else if (localAlliance != null && !localAlliance.isEmpty()
-                    && player.getGuild() != null && localAlliance.contains(player.getGuild()))
-            {
-                color = COLOR_PLAYER_ALLIANCE;
-            }
-            else if (localFaction != 0f && localFaction == player.getFaction())
-            {
-                color = COLOR_PLAYER_FACTION;
-            }
-
-            // 外圈 + 实心点，和 PC 版“彩色分类 + 中心点”一致
-            entityPaint.setColor(color);
-            entityPaint.setAlpha(110);
-            canvas.drawCircle(tmpScreen[0], tmpScreen[1], baseRadius * 1.55f, entityPaint);
+            // 外圈 + 实心点（PC：彩色分类 + 中心点）
+            entityPaint.setColor(playerColor);
+            entityPaint.setAlpha(100);
+            canvas.drawCircle(tmpScreen[0], tmpScreen[1], baseRadius * 1.7f, entityPaint);
             entityPaint.setAlpha(255);
             canvas.drawCircle(tmpScreen[0], tmpScreen[1], baseRadius, entityPaint);
 
-            float textY = tmpScreen[1] - baseRadius * 2.2f;
+            playerRingPaint.setColor(playerColor);
+            canvas.drawCircle(tmpScreen[0], tmpScreen[1], baseRadius * 1.7f, playerRingPaint);
+
+            float textY = tmpScreen[1] - baseRadius * 2.4f;
             entityTextPaint.setColor(0xFFFFFFFF);
             entityTextPaint.setTextSize(Math.max(10f, width * 0.026f));
 
@@ -1019,7 +1349,7 @@ public class RadarView extends View
             {
                 String nickname = player.getNickname();
 
-                if (nickname != null && !nickname.isEmpty())
+                if (nickname != null && !nickname.isEmpty() && !"null".equals(nickname))
                 {
                     canvas.drawText(ellipsize(nickname, 16), tmpScreen[0], textY, entityTextPaint);
                     textY -= entityTextPaint.getTextSize() * 1.15f;
@@ -1044,20 +1374,135 @@ public class RadarView extends View
 
             if (settings.playerMounted && player.mounted)
             {
-                canvas.drawText("M", tmpScreen[0] + baseRadius * 1.8f,
-                        tmpScreen[1] + baseRadius * 0.6f, entityTextPaint);
+                canvas.drawText("M", tmpScreen[0] + baseRadius * 1.9f,
+                        tmpScreen[1] + baseRadius * 0.7f, entityTextPaint);
             }
 
             if (settings.playerHealth && player.getMaxHealth() > 0)
             {
-                drawHealthBar(canvas, tmpScreen[0], tmpScreen[1] + baseRadius * 1.9f,
+                drawHealthBar(canvas, tmpScreen[0], tmpScreen[1] + baseRadius * 2.1f,
                         player.currentHealth / player.getMaxHealth(), width);
             }
 
             drawn++;
         }
 
+        if (System.currentTimeMillis() - lastPlayerDiagTime > 3000)
+        {
+            lastPlayerDiagTime = System.currentTimeMillis();
+            Log.d(TAG, "players detected=" + players.size() + " drawn=" + drawn
+                    + " xorReady=" + com.minhui.vpn.PhotonPackageParser.classes.PlayerMoveDecoder.isReady());
+        }
+
         return drawn;
+    }
+
+    /** PC 配色：敌对红 / 公会绿 / 联盟紫 / 阵营橙 / 中立蓝。 */
+    private static int playerColor(Player player, String localGuild, String localAlliance,
+                                   float localFaction)
+    {
+        float faction = player.getFaction();
+
+        if (faction == 255f)
+        {
+            return COLOR_PLAYER_HOSTILE;
+        }
+
+        if (localGuild != null && !localGuild.isEmpty() && localGuild.equals(player.getGuild()))
+        {
+            return COLOR_PLAYER_GUILD;
+        }
+
+        if (localAlliance != null && !localAlliance.isEmpty() && player.getGuild() != null
+                && localAlliance.contains(player.getGuild()))
+        {
+            return COLOR_PLAYER_ALLIANCE;
+        }
+
+        if (faction >= 1 && faction <= 6 && localFaction != 0f && localFaction == faction)
+        {
+            return COLOR_PLAYER_FACTION;
+        }
+
+        if (faction >= 1 && faction <= 6)
+        {
+            return COLOR_PLAYER_FACTION;
+        }
+
+        return COLOR_PLAYER_OTHER;
+    }
+
+    /** 玩家分组过滤（被动 / 阵营 / 敌对）。 */
+    private static boolean isPlayerGroupVisible(RadarSettings settings, int color)
+    {
+        if (color == COLOR_PLAYER_HOSTILE)
+        {
+            return settings.playerHostile;
+        }
+
+        if (color == COLOR_PLAYER_FACTION)
+        {
+            return settings.playerFactionColor;
+        }
+
+        if (color == COLOR_PLAYER_ALLIANCE)
+        {
+            return settings.playerAllianceColor;
+        }
+
+        return settings.playerPassive;
+    }
+
+    /** 右上角“已发现玩家”面板：坐标解不出来的玩家也能被看到（PC 也只能做到“发现”）。 */
+    private void drawPlayerPanel(Canvas canvas, int width, int height, ArrayList<Player> players)
+    {
+        final RadarSettings settings = RadarSettings.getInstance();
+
+        if (!settings.playerPanel || players.isEmpty())
+        {
+            return;
+        }
+
+        float textSize = Math.max(10f, width * 0.024f);
+        int maxRows = Math.min(players.size(), 7);
+        float rowHeight = textSize * 1.35f;
+        float padding = Math.max(4f, width * 0.01f);
+        float boxWidth = Math.max(width * 0.32f, 120f);
+        float boxHeight = rowHeight * (maxRows + 1) + padding * 2f;
+        float left = width - boxWidth - padding;
+        float top = padding;
+
+        tmpRect.set(left, top, left + boxWidth, top + boxHeight);
+        canvas.drawRoundRect(tmpRect, 6f, 6f, panelBackPaint);
+
+        panelTextPaint.setTextSize(textSize);
+        panelTextPaint.setColor(0xFFFFD54F);
+        canvas.drawText("已发现玩家 " + players.size(), left + padding, top + padding + textSize, panelTextPaint);
+
+        panelTextPaint.setTextSize(textSize * 0.92f);
+
+        for (int i = 0; i < maxRows; i++)
+        {
+            Player player = players.get(i);
+            int color = playerColor(player, MainHandler.getInstance().playersHandler.localPlayerGuildName(),
+                    MainHandler.getInstance().playersHandler.localPlayerAlliance(),
+                    MainHandler.getInstance().playersHandler.localPlayerFaction());
+
+            float dotY = top + padding + textSize * 1.9f + i * rowHeight;
+            entityPaint.setColor(color);
+            canvas.drawCircle(left + padding + textSize * 0.35f, dotY - textSize * 0.3f,
+                    textSize * 0.35f, entityPaint);
+
+            String name = player.getNickname();
+
+            if (name == null || name.isEmpty() || "null".equals(name))
+            {
+                name = "#" + player.getId();
+            }
+
+            panelTextPaint.setColor(player.positionKnown ? 0xFFE0E0E0 : 0xFF9E9E9E);
+            canvas.drawText(ellipsize(name, 14), left + padding + textSize * 1.0f, dotY, panelTextPaint);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -1147,7 +1592,7 @@ public class RadarView extends View
     // ------------------------------------------------------------------
     private float iconSize(int width)
     {
-        // PC: 32px * canvasScale(500 基准) * zoom，最小可读尺寸 20px
+        // PC: 32px * canvasScale(500 基准) * zoom * settingRadarIconSize，最小可读尺寸 20px
         float zoom = RadarSettings.getInstance().radarScaleBar;
 
         if (!Float.isFinite(zoom) || zoom <= 0.05f)
@@ -1157,7 +1602,16 @@ public class RadarView extends View
 
         zoom = Math.max(0.1f, Math.min(4f, zoom));
 
-        return Math.max(20f, Math.min(64f, 32f * (width / PC_REFERENCE_CANVAS) * zoom));
+        float iconScale = RadarSettings.getInstance().radarIconScale;
+
+        if (!Float.isFinite(iconScale) || iconScale <= 0.05f)
+        {
+            iconScale = 1f;
+        }
+
+        iconScale = Math.max(0.5f, Math.min(2f, iconScale));
+
+        return Math.max(14f, Math.min(80f, 32f * (width / PC_REFERENCE_CANVAS) * zoom * iconScale));
     }
 
     /** 资源等级角标：图标左上角画 T{tier}，有附魔再画 +N（PC badge 语义）。 */
@@ -1180,16 +1634,18 @@ public class RadarView extends View
         badgeTextPaint.setColor(0xFFFFFFFF);
         badgeTextPaint.setTextAlign(Paint.Align.CENTER);
 
+        String tierText = tier >= 1 ? "T" + tier : "T?";
+
         if (enchant > 0)
         {
             badgeTextPaint.setTextSize(badgeH * 0.82f);
-            canvas.drawText("T" + tier, left + badgeW * 0.28f, top + badgeH * 0.82f, badgeTextPaint);
+            canvas.drawText(tierText, left + badgeW * 0.28f, top + badgeH * 0.82f, badgeTextPaint);
             canvas.drawText("+" + enchant, left + badgeW * 0.74f, top + badgeH * 0.82f, badgeTextPaint);
         }
         else
         {
             badgeTextPaint.setTextSize(badgeH * 0.86f);
-            canvas.drawText("T" + tier, left + badgeW * 0.55f, top + badgeH * 0.84f, badgeTextPaint);
+            canvas.drawText(tierText, left + badgeW * 0.55f, top + badgeH * 0.84f, badgeTextPaint);
         }
 
         if (living)
@@ -1263,9 +1719,16 @@ public class RadarView extends View
     }
 
     private void drawHud(Canvas canvas, int width, int height,
-                         int harvest, int mobs, int players)
+                         int harvest, int mobs, int detectedPlayers, int drawnPlayers)
     {
-        String text = "资源 " + harvest + "   怪物 " + mobs + "   玩家 " + players;
+        String text = "资源 " + harvest + "   怪物 " + mobs + "   玩家 " + detectedPlayers;
+
+        if (drawnPlayers < detectedPlayers)
+        {
+            // 坐标加密、只能确认存在的玩家：标注“定位中”
+            text += "（定位 " + drawnPlayers + "）";
+        }
+
         float textSize = hudPaint.getTextSize();
         float padding = Math.max(4f, width * 0.012f);
         float textWidth = hudPaint.measureText(text);

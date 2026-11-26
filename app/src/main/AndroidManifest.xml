@@ -53,6 +53,12 @@
           android:name="com.minhui.networkcapture.RadarActivities.SettingsActivity"
           android:theme="@style/ToolbarTheme"/>
 
+      <!-- PC 式“渲染选项”分组页：横竖屏自适应（竖屏单列 / 横屏两列）。
+           不写 screenOrientation：跟随系统方向，Activity 重建时按新方向排版。 -->
+      <activity
+          android:name="com.minhui.networkcapture.RadarActivities.RenderOptionsActivity"
+          android:theme="@style/ToolbarTheme" />
+
         <service
             android:name=".RadarDrawView"
             android:enabled="true"

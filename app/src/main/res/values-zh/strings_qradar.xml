@@ -118,4 +118,5 @@
     <string name="qr_mihomo_status_stopped">内置 mihomo：未运行</string>
     <string name="qr_mihomo_status_not_configured">内置 mihomo：尚未填写订阅链接</string>
     <string name="qr_mihomo_status_unavailable">内置 mihomo：本设备不可用（需要 arm64）</string>
+    <string name="qr_render_options">渲染选项</string>
 </resources>

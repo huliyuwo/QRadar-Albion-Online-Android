@@ -83,6 +83,9 @@ public class PhotonPacketParser
     private static int diagOps = 0;
     private static int diagResponses = 0;
     private static int diagMoves = 0;
+    private static int diagMoveRequests = 0;
+    private static int diagEncodedMoves = 0;
+    private static final java.util.HashSet<Integer> diagEventCodesSeen = new java.util.HashSet<>();
     private static int diagEventErrors = 0;
 
     public void receive(ByteBuffer packet)
@@ -524,6 +527,46 @@ public class PhotonPacketParser
                     break;
 
                 default:
+                    // 诊断：记录每个未处理事件码一次，便于发现“玩家坐标藏在哪个事件里”
+                    if (diagEventCodesSeen.size() < 80 && diagEventCodesSeen.add(code))
+                    {
+                        StringBuilder builder = new StringBuilder("EVT code=").append(code)
+                                .append(" name=").append(eventCode).append(" params=");
+
+                        for (Map.Entry<Object, Object> entry : parameters.entrySet())
+                        {
+                            builder.append(entry.getKey()).append('=');
+
+                            Object value = entry.getValue();
+
+                            if (value instanceof Object[])
+                            {
+                                Object[] array = (Object[]) value;
+                                builder.append("Object[").append(array.length).append("]{");
+
+                                for (int i = 0; i < Math.min(4, array.length); i++)
+                                {
+                                    builder.append(array[i]).append(',');
+                                }
+
+                                builder.append('}');
+                            }
+                            else if (value instanceof byte[])
+                            {
+                                builder.append("byte[").append(((byte[]) value).length).append(']');
+                            }
+                            else
+                            {
+                                builder.append(value).append('(')
+                                        .append(value == null ? "null" : value.getClass().getSimpleName())
+                                        .append(')');
+                            }
+
+                            builder.append(' ');
+                        }
+
+                        Log.d("RadarDiag", builder.toString());
+                    }
                     break;
             }
         }
@@ -543,18 +586,68 @@ public class PhotonPacketParser
         float x = Float.intBitsToFloat(Utils.bytesToInt(bytes, 9));
         float y = Float.intBitsToFloat(Utils.bytesToInt(bytes, 13));
 
+        final com.minhui.vpn.Handlers.PlayersHandler playersHandler =
+                MainHandler.getInstance().playersHandler;
+        final int localId = playersHandler.localPlayerId();
+        final boolean knownPlayer = id != localId && playersHandler.containsPlayer(id);
+
+        if (knownPlayer || !PlayerMoveDecoder.isPlausible(x, y))
+        {
+            // 玩家坐标：第二层 8 字节 XorCode 异或（明文解出来是 NaN/Inf）。
+            // 自身事件用来反推 XorCode；拿到之后所有玩家坐标都能解。
+            if (id == localId)
+            {
+                PlayerMoveDecoder.onSelfMove(bytes, 9,
+                        playersHandler.localPlayerPosX(), playersHandler.localPlayerPosY(),
+                        playersHandler.localPlayerPosAgeMs());
+
+                // 自身坐标以客户端明文请求为准，事件解不出来也不影响雷达居中
+                if (!PlayerMoveDecoder.isPlausible(x, y))
+                {
+                    return;
+                }
+            }
+            else
+            {
+                float[] decoded = PlayerMoveDecoder.decode(bytes, 9);
+
+                if (decoded == null)
+                {
+                    if (diagEncodedMoves++ < 12)
+                    {
+                        Log.d("RadarDiag", "MOVE-ENC id=" + id + " local=" + localId
+                                + " len=" + bytes.length + " hex=" + PlayerMoveDecoder.hex(bytes));
+                    }
+
+                    return;
+                }
+
+                x = decoded[0];
+                y = decoded[1];
+            }
+        }
+        else if (id == localId)
+        {
+            // 自身事件既可能是明文也可能是 XOR：两种都喂给解码器，便于自恢复
+            PlayerMoveDecoder.onSelfMove(bytes, 9,
+                    playersHandler.localPlayerPosX(), playersHandler.localPlayerPosY(),
+                    playersHandler.localPlayerPosAgeMs());
+        }
+
         if (!Float.isFinite(x) || !Float.isFinite(y))
         {
-            // 玩家坐标是 XOR 加密的（需要 MITM 才能解码），解出来是 NaN/Inf，直接丢弃
             return;
         }
 
         position[0] = x;
         position[1] = y;
 
-        if (diagMoves++ < 5)
+        if (diagMoves++ < 20)
         {
-            Log.d("RadarDiag", "MOVE id=" + id + " pos=" + x + "," + y + " keys=" + parameters.keySet());
+            Log.d("RadarDiag", "MOVE id=" + id + " local=" + localId + " len=" + bytes.length
+                    + " pos=" + x + "," + y + " known=" + knownPlayer
+                    + " xor=" + PlayerMoveDecoder.isReady()
+                    + (diagMoves <= 8 ? " hex=" + PlayerMoveDecoder.hex(bytes) : ""));
         }
 
         newPlayerEvent.updatePlayerPosition(id, x, y);
@@ -572,7 +665,7 @@ public class PhotonPacketParser
             return;
         }
 
-        if (diagOps++ < 25)
+        if (operationCode != OperationCodes.Move && diagOps++ < 25)
         {
             Log.d("RadarDiag", "OPREQ hdr=" + (headerCode & 0xFF) + " p253=" + parameters.get(PARAM_OPERATION_CODE)
                     + " ->" + operationCode + " keys=" + parameters.keySet());
@@ -595,10 +688,18 @@ public class PhotonPacketParser
                             targetPos != null && targetPos.length >= 2 ? targetPos[1] : pos[1],
                             speed);
                 }
+
+                if (diagMoveRequests++ < 3)
+                {
+                    Log.d("RadarDiag", "MOVEREQ pos=" + (pos == null ? "null" : pos[0] + "," + pos[1])
+                            + " target=" + (targetPos == null ? "null" : targetPos[0] + "," + targetPos[1])
+                            + " angle=" + angle + " speed=" + speed);
+                }
                 break;
             }
 
             case ChangeCluster:
+                Log.d("RadarDiag", "ChangeCluster REQUEST -> clearAll");
                 MainHandler.getInstance().clearAll();
                 break;
 
@@ -645,6 +746,7 @@ public class PhotonPacketParser
 
             case ChangeCluster:
                 // 参考 PC：换图响应到达时清空上一张图的实体
+                Log.d("RadarDiag", "ChangeCluster RESPONSE -> clearAll");
                 MainHandler.getInstance().clearAll();
                 break;
 

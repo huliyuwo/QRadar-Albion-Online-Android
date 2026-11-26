@@ -16,6 +16,8 @@ public class Player
     public boolean mounted = false;
     public boolean firstMount = false;
     public boolean invalidate = false;
+    /** 坐标是否可以上雷达：玩家坐标是 XOR 加密的，解出来之前只能算“已发现”。 */
+    public boolean positionKnown = false;
     private int faction;
     private float maxEnergy;
     private float currentEnergy;
@@ -155,5 +157,25 @@ public class Player
     public float getFaction()
     {
         return faction;
+    }
+
+    public void setFaction(int faction)
+    {
+        this.faction = faction;
+    }
+
+    public float getCurrentHealth()
+    {
+        return currentHealth;
+    }
+
+    /** NewCharacter / HealthUpdate 里带过来的血量快照（maxHealth 为 0 时忽略）。 */
+    public void setHealthSnapshot(float currentHealth, float maxHealth)
+    {
+        if (maxHealth > 0)
+        {
+            this.currentHealth = currentHealth;
+            this.maxHealth = maxHealth;
+        }
     }
 }

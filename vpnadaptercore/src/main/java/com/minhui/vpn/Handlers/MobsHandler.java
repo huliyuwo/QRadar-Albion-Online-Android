@@ -3,6 +3,7 @@ import android.util.Log;
 import com.google.gson.Gson;
 import com.minhui.vpn.Handlers.HandlerItem.Mob;
 import com.minhui.vpn.PhotonPackageParser.enumerations.MobCodes;
+import com.minhui.vpn.PhotonPackageParser.enumerations.MobsResourceTable;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -761,6 +762,9 @@ public class MobsHandler
         mobinfo.put(typeId, mobsInfo);
     }
 
+    private static int diagLivingLogCount;
+    private static int diagMobLogCount;
+
     public void AddMob(int id, int typeId, String name, float posX, float posY, int health, int enchant, int rarity)
     {
         SharedLocks.mobsHandlerLock.writeLock().lock();
@@ -769,18 +773,51 @@ public class MobsHandler
         {
             Mob h = new Mob(id, typeId, name, posX, posY, health, enchant, rarity);
 
-            if (mobinfo.containsKey(typeId))
+            // 活体资源以权威表（由 PC 版 mobs dump 生成）为准：
+            // 旧手工表来自过期游戏版本，编号空间整体平移，会造成「活体资源被当普通怪」
+            // 以及「Boss/守卫被当资源」两类误判，是部分资源怪不显示的直接原因。
+            if (MobsResourceTable.isLivingResource(typeId))
+            {
+                h.tier = MobsResourceTable.tierOf(typeId);
+                h.type = MobsResourceTable.isSkinnable(typeId) ? MobCodes.Skinnable : MobCodes.Harvestable;
+                h.name = MobsResourceTable.kindOf(typeId);
+                h.info = true;
+
+                if (diagLivingLogCount++ < 40)
+                {
+                    Log.d("RadarDiag", "living res typeId=" + typeId + " kind=" + h.name
+                            + " tier=" + h.tier + " enchant=" + enchant + " hp=" + health
+                            + " id=" + id + " pos=" + posX + "," + posY);
+                }
+            }
+            else if (mobinfo.containsKey(typeId))
             {
                 MobsInfo mobsInfo = mobinfo.get(typeId);
 
                 assert mobsInfo != null;
-                h.tier = mobsInfo.tier;
-                h.type = mobsInfo.type;
-                h.name = mobsInfo.localization;
-                h.info = true;
 
-                String JsonData = "typeId:" + typeId + " name:" + name + " health:" + health + " tier:"+ h.getTier() + " type:" + h.getType();
-                Log.d("AddMob5",JsonData);
+                if (mobsInfo.type == MobCodes.Harvestable || mobsInfo.type == MobCodes.Skinnable)
+                {
+                    // 旧表里标成资源的编号在权威表里并不是活体资源（编号空间过期）：
+                    // 降级成普通怪，避免把 Boss/守卫画成资源图标，或它们被资源开关误滤掉。
+                    h.tier = 0;
+                    h.name = null;
+                    h.type = MobCodes.Enemy;
+                    h.info = false;
+                }
+                else
+                {
+                    h.tier = mobsInfo.tier;
+                    h.type = mobsInfo.type;
+                    h.name = mobsInfo.localization;
+                    h.info = true;
+                }
+
+                if (diagMobLogCount++ < 40)
+                {
+                    Log.d("RadarDiag", "mob typeId=" + typeId + " tier=" + h.tier + " type=" + h.type
+                            + " name=" + h.name + " hp=" + health);
+                }
             }
             else
             {
@@ -793,8 +830,11 @@ public class MobsHandler
                     h.info = true;
                 }
 
-                String JsonData = "typeId:" + typeId + " name:" + name + " health:" + health + " tier:"+ h.getTier() + " type:" + h.getType();
-                Log.d("AddMob6",JsonData);
+                if (diagMobLogCount++ < 40)
+                {
+                    Log.d("RadarDiag", "mob? typeId=" + typeId + " tier=" + h.tier + " type=" + h.type
+                            + " hp=" + health);
+                }
             }
 
             if (!mobsList.contains(h))

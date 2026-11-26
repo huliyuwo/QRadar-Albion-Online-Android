@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Albion QRadar</string>
+    <string name="qr_render_options">渲染选项</string>
 </resources>
