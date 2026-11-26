@@ -66,6 +66,9 @@ public class VPNCaptureActivity extends FragmentActivity
             // 不会出现“先注册监听、后 new Handler”导致的空指针竞态。
             postVpnButtonSync();
             startRadarWindowService();
+
+            // VPN 刚建好时 DNS 链路可能还没通：做一次带重试的解析自检，并检查系统私人 DNS
+            com.minhui.networkcapture.Utils.NetworkReadiness.checkAsync(context);
         }
 
         @Override

@@ -301,6 +301,11 @@ public class UDPTunnel implements KeyHandler
     public void initConnection()
     {
         InetAddress destinationAddress = referencePacket.ip4Header.destinationAddress;
+
+        if (referencePacket.udpHeader.destinationPort == 53)
+        {
+            DnsStats.recordQuery();
+        }
         int destinationPort = referencePacket.udpHeader.destinationPort;
 
         originalDestination = destinationAddress;
@@ -330,10 +335,12 @@ public class UDPTunnel implements KeyHandler
             {
                 channelAddress = InetAddress.getByName(DNS_FALLBACK);
                 channelPort = DNS_PORT;
-                VPNLog.d(TAG, "DNS redirect " + destinationAddress.getHostAddress() + ":53 -> " + DNS_FALLBACK);
+                DnsStats.recordHijack();
+                VPNLog.d(TAG, "DNS redirect " + destinationAddress.getHostAddress() + ":53 -> " + DNS_FALLBACK + " | " + DnsStats.summary());
             }
             catch (Exception e)
             {
+                DnsStats.recordFailure();
                 VPNLog.w(TAG, "DNS redirect failed: " + e);
             }
         }

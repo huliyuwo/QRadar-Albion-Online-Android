@@ -168,6 +168,10 @@ public class TcpProxyServer implements Runnable
         }
     }
 
+    /** DNS over TCP 兜底：53 端口统一改投国内可达 DNS（与 UDP 劫持保持一致）。 */
+    private static final String DNS_TCP_FALLBACK = "223.5.5.5";
+    private static final int DNS_PORT = 53;
+
     InetSocketAddress getDestAddress(SocketChannel localChannel)
     {
         short portKey = (short) localChannel.socket().getPort();
@@ -175,7 +179,25 @@ public class TcpProxyServer implements Runnable
 
         if (session != null)
         {
-            return new InetSocketAddress(localChannel.socket().getInetAddress(), session.remotePort & 0xFFFF);
+            int remotePort = session.remotePort & 0xFFFF;
+
+            if (remotePort == DNS_PORT)
+            {
+                try
+                {
+                    com.minhui.vpn.tunnel.DnsStats.recordQuery();
+                    com.minhui.vpn.tunnel.DnsStats.recordHijack();
+                    DebugLog.i("tcp dns redirect -> " + DNS_TCP_FALLBACK);
+                    return new InetSocketAddress(java.net.InetAddress.getByName(DNS_TCP_FALLBACK), DNS_PORT);
+                }
+                catch (Throwable e)
+                {
+                    com.minhui.vpn.tunnel.DnsStats.recordFailure();
+                    DebugLog.w("tcp dns redirect failed: " + e);
+                }
+            }
+
+            return new InetSocketAddress(localChannel.socket().getInetAddress(), remotePort);
         }
         return null;
     }
