@@ -205,6 +205,8 @@ public class TcpProxyServer implements Runnable
     void onAccepted(SelectionKey key)
     {
         TcpTunnel localTunnel = null;
+        InetSocketAddress destAddress = null;
+        long startedAt = System.currentTimeMillis();
 
         try
         {
@@ -218,10 +220,16 @@ public class TcpProxyServer implements Runnable
 
             localTunnel = TunnelFactory.wrap(localChannel, mSelector);
             short portKey = (short) localChannel.socket().getPort();
-            InetSocketAddress destAddress = getDestAddress(localChannel);
+            destAddress = getDestAddress(localChannel);
 
             if (destAddress != null)
             {
+                boolean viaProxy = UpstreamProxyConfig.isEnabled()
+                        && !UpstreamProxyConfig.isDirectEndpoint(destAddress);
+                VPNLog.d("VPNLog", "TCPACCEPT target=" + destAddress.getAddress().getHostAddress()
+                        + ":" + destAddress.getPort() + " key=" + (portKey & 0xFFFF)
+                        + " mode=" + (viaProxy ? "socks5" : "direct"));
+
                 TcpTunnel remoteTunnel = TunnelFactory.createTunnelByConfig(destAddress, mSelector, portKey);
 
                 remoteTunnel.setIsHttpsRequest(localTunnel.isHttpsRequest());
@@ -229,6 +237,12 @@ public class TcpProxyServer implements Runnable
                 localTunnel.setBrotherTunnel(remoteTunnel);
 
                 remoteTunnel.connect(destAddress);
+            }
+            else
+            {
+                VPNLog.w("VPNLog", "TCPACCEPT no-session key=" + (portKey & 0xFFFF)
+                        + " (NAT session missing, drop local conn)");
+                localTunnel.dispose();
             }
         }
         catch (Exception ex)
@@ -238,7 +252,9 @@ public class TcpProxyServer implements Runnable
                 ex.printStackTrace(System.err);
             }
 
-            DebugLog.e("TcpProxyServer onAccepted catch an exception: %s", ex);
+            VPNLog.w("VPNLog", "TCPACCEPT fail dest=" + destAddress
+                    + " elapsed=" + (System.currentTimeMillis() - startedAt) + "ms"
+                    + " err=" + ex.getClass().getSimpleName() + "(" + ex.getMessage() + ")");
 
             if (localTunnel != null)
             {

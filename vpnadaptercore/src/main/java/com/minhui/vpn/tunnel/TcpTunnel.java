@@ -19,6 +19,11 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Created by zengzheying on 15/12/29.
@@ -26,6 +31,21 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 public abstract class TcpTunnel implements KeyHandler
 {
     public static long sessionCount;
+
+    /**
+     * 远端 TCP 建连超时。之前没有超时：手机网络下 SYN 被丢/黑洞时，内核要等几十秒才失败，
+     * 而客户端（游戏）这边的 TCP 早已被本地代理"半 NAT"应答为已连接，只能干等 ——
+     * 表现就是"有时候卡在连接服务器"。超时后主动 dispose，客户端立刻收到 FIN/RST 并可重试。
+     */
+    private static final long CONNECT_TIMEOUT_MS = 6000;
+
+    private static final ScheduledExecutorService CONNECT_TIMEOUT_EXECUTOR =
+            Executors.newSingleThreadScheduledExecutor(runnable ->
+            {
+                Thread thread = new Thread(runnable, "TcpConnectTimeout");
+                thread.setDaemon(true);
+                return thread;
+            });
 
     /** 所有存活隧道的登记表：切换代理开关时用来强制断开，让新出口立刻生效。 */
     private static final java.util.Set<TcpTunnel> ALL_TUNNELS =
@@ -80,10 +100,17 @@ public abstract class TcpTunnel implements KeyHandler
     private Selector mSelector;
     private boolean isHttpsRequest = false;
     private TcpTunnel mBrotherTunnel;
-    private boolean mDisposed;
+    private final AtomicBoolean mDisposed = new AtomicBoolean();
     private InetSocketAddress mServerEP;
     short portKey;
     ConcurrentLinkedQueue<ByteBuffer> needWriteData = new ConcurrentLinkedQueue<>();
+
+    /** 远端建连是否已完成（含 SOCKS5 握手），用于超时兜底判断。 */
+    private volatile boolean mConnectEstablished;
+    /** 建连开始时间，用于日志里的耗时统计。 */
+    private volatile long mConnectStartTime;
+    /** 建连超时兜底任务。 */
+    private volatile ScheduledFuture<?> mConnectTimeoutFuture;
 
     public TcpTunnel(SocketChannel innerChannel, Selector selector)
     {
@@ -115,17 +142,19 @@ public abstract class TcpTunnel implements KeyHandler
     @Override
     public void onKeyReady(SelectionKey key)
     {
-        if (key.isReadable())
+        // 先处理"连接完成"：建连期间如果同时被判可写，必须先走 finishConnect，
+        // 否则 onConnected/onTunnelEstablished 不会被调用，隧道会一直挂起。
+        if (key.isConnectable())
+        {
+            onConnectable();
+        }
+        else if (key.isReadable())
         {
             onReadable(key);
         }
         else if (key.isWritable())
         {
             onWritable(key);
-        }
-        else if (key.isConnectable())
-        {
-            onConnectable();
         }
     }
 
@@ -149,16 +178,57 @@ public abstract class TcpTunnel implements KeyHandler
         if (VpnServiceHelper.protect(mInnerChannel.socket()))
         {
             mDestAddress = destAddress;
+            mConnectStartTime = System.currentTimeMillis();
+            mConnectEstablished = false;
+
+            // 兜底超时：建连（含 SOCKS5 握手）超时就主动断开，让客户端尽快重试。
+            mConnectTimeoutFuture = CONNECT_TIMEOUT_EXECUTOR.schedule(this::onConnectTimeout,
+                    CONNECT_TIMEOUT_MS, TimeUnit.MILLISECONDS);
 
             mInnerChannel.register(mSelector, SelectionKey.OP_CONNECT, this);
             mInnerChannel.connect(mServerEP);
 
             DebugLog.i("Connecting to %s", mServerEP);
+            TcpStats.recordAccepted(destAddress, viaProxy());
         }
         else
         {
+            TcpStats.recordFailure(destAddress, 0, viaProxy(),
+                    new IOException("VPN protect socket failed"));
             throw new Exception("VPN protect socket failed.");
         }
+    }
+
+    /** 建连超时兜底：主动断开隧道，客户端收到 FIN/RST 后可以立刻重试。 */
+    private void onConnectTimeout()
+    {
+        if (mDisposed.get() || mConnectEstablished)
+        {
+            return;
+        }
+
+        long elapsed = System.currentTimeMillis() - mConnectStartTime;
+        TcpStats.recordTimeout(mDestAddress, elapsed, viaProxy());
+        VPNLog.w("VPNLog", "TCPCONN timeout target=" + mDestAddress + " server=" + mServerEP
+                + " elapsed=" + elapsed + "ms -> close tunnel (fast-fail)");
+        dispose();
+    }
+
+    private void cancelConnectTimeout()
+    {
+        ScheduledFuture<?> future = mConnectTimeoutFuture;
+
+        if (future != null)
+        {
+            future.cancel(false);
+            mConnectTimeoutFuture = null;
+        }
+    }
+
+    /** 是否走上游 SOCKS5 代理（子类可覆盖）。 */
+    protected boolean viaProxy()
+    {
+        return false;
     }
 
     public void onConnectable()
@@ -168,16 +238,25 @@ public abstract class TcpTunnel implements KeyHandler
             if (mInnerChannel.finishConnect())
             {
                 onConnected();
+                mConnectEstablished = true;
+                cancelConnectTimeout();
+                TcpStats.recordConnected(mDestAddress,
+                        Math.max(0, System.currentTimeMillis() - mConnectStartTime), viaProxy());
                 DebugLog.i("Connected to %s", mServerEP);
             }
             else
             {
+                TcpStats.recordFailure(mDestAddress,
+                        Math.max(0, System.currentTimeMillis() - mConnectStartTime), viaProxy(),
+                        new IOException("finishConnect returned false"));
                 DebugLog.e("Connect to %s failed.", mServerEP);
                 this.dispose();
             }
         }
         catch (Exception e)
         {
+            TcpStats.recordFailure(mDestAddress,
+                    Math.max(0, System.currentTimeMillis() - mConnectStartTime), viaProxy(), e);
             if (AppDebug.IS_DEBUG)
             {
                 e.printStackTrace(System.err);
@@ -266,7 +345,17 @@ public abstract class TcpTunnel implements KeyHandler
         try
         {
             mSelector.wakeup();
-            mInnerChannel.register(mSelector, SelectionKey.OP_READ | SelectionKey.OP_WRITE, this);
+
+            // 建连未完成时必须保留 OP_CONNECT，否则 finishConnect/onConnected 永远等不到，
+            // 隧道会"连上了却一直不通"。
+            int ops = SelectionKey.OP_READ | SelectionKey.OP_WRITE;
+
+            if (mInnerChannel.isConnectionPending())
+            {
+                ops |= SelectionKey.OP_CONNECT;
+            }
+
+            mInnerChannel.register(mSelector, ops, this);
         }
         catch (ClosedChannelException e)
         {
@@ -349,11 +438,22 @@ public abstract class TcpTunnel implements KeyHandler
 
     void disposeInternal(boolean disposeBrother)
     {
-        if (!mDisposed)
+        // CAS 保证并发 dispose（selector 线程 + 建连超时线程）只执行一次；
+        // 不能用 synchronized 包住，否则两个互为 brother 的隧道同时 dispose 会死锁。
+        if (!mDisposed.compareAndSet(false, true))
+        {
+            return;
+        }
+
+        cancelConnectTimeout();
+
+        SocketChannel channel = mInnerChannel;
+
+        if (channel != null)
         {
             try
             {
-                mInnerChannel.close();
+                channel.close();
             }
             catch (Exception ex)
             {
@@ -364,22 +464,30 @@ public abstract class TcpTunnel implements KeyHandler
 
                 DebugLog.e("InnerChannel close catch an exception: %s", ex);
             }
-
-            if (mBrotherTunnel != null && disposeBrother)
-            {
-                mBrotherTunnel.disposeInternal(false);
-            }
-
-            mInnerChannel = null;
-            mSelector = null;
-            mBrotherTunnel = null;
-            mDisposed = true;
-            sessionCount--;
-            ALL_TUNNELS.remove(this);
-
-            onDispose();
-            NatSessionManager.removeSession(portKey);
         }
+
+        TcpTunnel brother = mBrotherTunnel;
+
+        if (brother != null && disposeBrother)
+        {
+            brother.disposeInternal(false);
+        }
+
+        mInnerChannel = null;
+        mSelector = null;
+        mBrotherTunnel = null;
+        sessionCount--;
+        ALL_TUNNELS.remove(this);
+
+        try
+        {
+            onDispose();
+        }
+        catch (Throwable ignored)
+        {
+        }
+
+        NatSessionManager.removeSession(portKey);
     }
 
     public void setIsHttpsRequest(boolean isHttpsRequest)

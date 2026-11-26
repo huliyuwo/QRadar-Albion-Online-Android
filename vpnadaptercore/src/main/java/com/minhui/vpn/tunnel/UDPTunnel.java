@@ -31,6 +31,10 @@ import java.nio.channels.Selector;
 import java.nio.channels.SocketChannel;
 import java.util.Queue;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Created by minhui.zhu on 2017/7/11.
@@ -63,6 +67,48 @@ public class UDPTunnel implements KeyHandler
     private InetAddress originalDestination;
     private int originalDestinationPort;
 
+    /** 客户端（tun 侧）地址与端口：DNS 本地应答要用它们构造回包。 */
+    private final InetAddress clientAddress;
+    private final int clientPort;
+
+    /** DNS 劫持：游戏/系统可能去查被墙的 DNS（8.8.8.8、216.239.32.10 等），直连必然超时。 */
+    private static final int DNS_PORT = 53;
+    private static final String DNS_FALLBACK = "223.5.5.5";
+
+    /**
+     * DNS 上游无应答时的看门狗：先重发 1 次；仍无应答就本地回 SERVFAIL，
+     * 让系统解析器立刻换服务器重试（而不是干等 5s 超时）。这也覆盖了
+     * "VPN 刚起来、上游 DNS 链路还没就绪"的启动竞态，避免静默丢包。
+     */
+    private static final long DNS_RETRY_DELAY_MS = 1500;
+    private static final int DNS_MAX_RETRY = 1;
+    private static final ScheduledExecutorService DNS_WATCHDOG_EXECUTOR =
+            Executors.newSingleThreadScheduledExecutor(runnable ->
+            {
+                Thread thread = new Thread(runnable, "DnsWatchdog");
+                thread.setDaemon(true);
+                return thread;
+            });
+
+    private volatile boolean closed;
+    private volatile PendingDns pendingDns;
+    private volatile ScheduledFuture<?> dnsWatchdogFuture;
+
+    /** 最近一次待应答的 DNS 查询（用于重发/SERVFAIL 本地兜底）。 */
+    private static final class PendingDns
+    {
+        final byte[] payload;
+        final InetAddress serverAddress;
+        final int serverPort;
+
+        PendingDns(byte[] payload, InetAddress serverAddress, int serverPort)
+        {
+            this.payload = payload;
+            this.serverAddress = serverAddress;
+            this.serverPort = serverPort;
+        }
+    }
+
     public UDPTunnel(VpnService vpnService, Selector selector, UDPServer vpnServer, Packet packet, Queue<Packet> outputQueue, short portKey)
     {
         this.vpnService = vpnService;
@@ -74,6 +120,8 @@ public class UDPTunnel implements KeyHandler
         this.portKey = portKey;
         this.session = NatSessionManager.getSession(portKey);
         this.handler = new Handler(Looper.getMainLooper());
+        this.clientAddress = packet.ip4Header.sourceAddress;
+        this.clientPort = packet.udpHeader.sourcePort;
 
         if (VpnServiceHelper.isUDPDataNeedSave())
         {
@@ -157,6 +205,12 @@ public class UDPTunnel implements KeyHandler
             VPNLog.d(TAG, "DIAG udp recv bytes=" + readBytes + " " + ipAndPort);
             Packet newPacket = referencePacket.duplicated();
 
+            // DNS 应答：诊断记录 + 兜底剥离 AAAA + 取消看门狗
+            if (newPacket.udpHeader != null && newPacket.udpHeader.sourcePort == DNS_PORT)
+            {
+                readBytes = handleDnsResponse(receiveBuffer, readBytes);
+            }
+
             try
             {
                 if (newPacket.udpHeader.destinationPort == 5056 || newPacket.udpHeader.sourcePort == 5056)
@@ -183,6 +237,58 @@ public class UDPTunnel implements KeyHandler
         }
     }
 
+    /**
+     * 处理 DNS 应答：记录 qtype/记录数诊断，剥离 AAAA（可选兜底），并结束看门狗。
+     *
+     * @return 处理后的 payload 长度（可能因剥离 AAAA 变短）
+     */
+    private int handleDnsResponse(ByteBuffer receiveBuffer, int readBytes)
+    {
+        try
+        {
+            pendingDns = null;
+            cancelDnsWatchdog();
+
+            byte[] payload = new byte[readBytes];
+
+            if (receiveBuffer.hasArray())
+            {
+                System.arraycopy(receiveBuffer.array(), receiveBuffer.arrayOffset() + HEADER_SIZE,
+                        payload, 0, readBytes);
+            }
+            else
+            {
+                ByteBuffer copy = receiveBuffer.duplicate();
+                copy.position(HEADER_SIZE);
+                copy.get(payload, 0, readBytes);
+            }
+
+            DnsMessage.ResponseSummary summary = DnsMessage.describeResponse(payload, 0, payload.length);
+
+            if (summary != null)
+            {
+                DnsStats.recordResponseDetail(summary.toString());
+            }
+
+            byte[] stripped = DnsMessage.stripAaaaRecords(payload, 0, payload.length);
+
+            if (stripped != null && stripped.length <= receiveBuffer.capacity() - HEADER_SIZE)
+            {
+                receiveBuffer.position(HEADER_SIZE);
+                receiveBuffer.put(stripped, 0, stripped.length);
+                DnsStats.recordAaaaStripped(summary == null ? 1 : Math.max(1, summary.aaaaRecords),
+                        summary == null ? null : summary.name);
+                return stripped.length;
+            }
+        }
+        catch (Throwable e)
+        {
+            VPNLog.w(TAG, "handleDnsResponse failed, forward raw reply: " + e);
+        }
+
+        return readBytes;
+    }
+
     public static ByteBuffer deepCopy( ByteBuffer orig )
     {
         int pos = orig.position(), lim = orig.limit();
@@ -191,7 +297,7 @@ public class UDPTunnel implements KeyHandler
         {
             orig.position(0).limit(orig.capacity()); // set range to entire buffer
             ByteBuffer toReturn = deepCopyVisible(orig); // deep copy range
-            toReturn.position(pos).limit(lim); // set range to original
+            toReturn.position(pos).limit(lim); // set to original
             return toReturn;
         }
         finally // do in finally in case something goes wrong we don't bork the orig
@@ -294,22 +400,234 @@ public class UDPTunnel implements KeyHandler
         }
     }
 
-    /** DNS 劫持：游戏/系统可能去查被墙的 DNS（8.8.8.8、216.239.32.10 等），直连必然超时。 */
-    private static final int DNS_PORT = 53;
-    private static final String DNS_FALLBACK = "223.5.5.5";
+    /** 从 libp2p 包中取出 UDP payload 字节（IP 头长度自适应）。 */
+    private static byte[] extractPayload(Packet packet)
+    {
+        try
+        {
+            ByteBuffer buffer = packet.backingBuffer;
+
+            if (buffer == null || !buffer.hasArray())
+            {
+                return null;
+            }
+
+            byte[] array = buffer.array();
+            int base = buffer.arrayOffset();
+            int ipHeaderLength = (array[base] & 0x0F) * 4;
+            int payloadOffset = ipHeaderLength + Packet.UDP_HEADER_SIZE;
+            int end = base + buffer.limit();
+
+            if (payloadOffset < 0 || base + payloadOffset >= end)
+            {
+                return null;
+            }
+
+            byte[] payload = new byte[end - (base + payloadOffset)];
+            System.arraycopy(array, base + payloadOffset, payload, 0, payload.length);
+            return payload;
+        }
+        catch (Throwable e)
+        {
+            return null;
+        }
+    }
+
+    /**
+     * DNS 查询处理：记录 QTYPE；AAAA 查询直接在本地回 NOERROR/NODATA，
+     * 不再转发给上游（本机在 VPN 内没有可用的 IPv6 路由，返回 AAAA 会让游戏偶发连不上）。
+     *
+     * @return true 表示已本地应答（调用方不要再转发）
+     */
+    private boolean handleDnsQuery(Packet packet, InetAddress serverAddress, int serverPort)
+    {
+        byte[] payload = extractPayload(packet);
+
+        if (payload == null)
+        {
+            DnsStats.recordQuery();
+            return false;
+        }
+
+        DnsMessage.Query query = DnsMessage.parseQuery(payload, 0, payload.length);
+        int qtype = query == null ? -1 : query.qtype;
+        DnsStats.recordQuery(qtype, query == null ? null : query.name);
+
+        if (query != null && query.isAaaaQuery())
+        {
+            byte[] response = DnsMessage.buildNoDataResponse(payload, 0, payload.length);
+
+            if (response != null)
+            {
+                DnsStats.recordAaaaDropped(query.name);
+                sendDnsResponse(response, serverAddress, serverPort);
+                return true;
+            }
+        }
+
+        pendingDns = new PendingDns(payload, serverAddress, serverPort);
+        return false;
+    }
+
+    /** 用 referencePacket 的头模板构造一个"服务器 -> 客户端"的 DNS 回包并写入 tun 输出队列。 */
+    private void sendDnsResponse(byte[] dnsPayload, InetAddress serverAddress, int serverPort)
+    {
+        try
+        {
+            ByteBuffer buffer = SocketUtils.getByteBuffer();
+
+            if (dnsPayload.length > buffer.capacity() - HEADER_SIZE)
+            {
+                VPNLog.w(TAG, "DNS reply too large, drop: " + dnsPayload.length);
+                return;
+            }
+
+            buffer.position(HEADER_SIZE);
+            buffer.put(dnsPayload, 0, dnsPayload.length);
+
+            Packet reply = referencePacket.duplicated();
+
+            if (reply.ip4Header == null || reply.udpHeader == null)
+            {
+                return;
+            }
+
+            reply.ip4Header.sourceAddress = serverAddress;
+            reply.ip4Header.destinationAddress = clientAddress;
+            reply.udpHeader.sourcePort = serverPort;
+            reply.udpHeader.destinationPort = clientPort;
+
+            reply.updateUDPBuffer(buffer, dnsPayload.length);
+            buffer.position(HEADER_SIZE + dnsPayload.length);
+
+            outputQueue.offer(reply);
+        }
+        catch (Throwable e)
+        {
+            VPNLog.w(TAG, "DNS local reply failed: " + e);
+        }
+    }
+
+    private void armDnsWatchdog()
+    {
+        PendingDns pending = pendingDns;
+
+        if (pending == null || closed)
+        {
+            return;
+        }
+
+        cancelDnsWatchdog();
+
+        try
+        {
+            dnsWatchdogFuture = DNS_WATCHDOG_EXECUTOR.schedule(
+                    () -> onDnsWatchdog(pending, 1), DNS_RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
+        }
+        catch (Throwable ignored)
+        {
+        }
+    }
+
+    private void cancelDnsWatchdog()
+    {
+        ScheduledFuture<?> future = dnsWatchdogFuture;
+
+        if (future != null)
+        {
+            future.cancel(false);
+            dnsWatchdogFuture = null;
+        }
+    }
+
+    /**
+     * 上游 DNS 无应答时的兜底链路：重发 -> 仍无应答则回 SERVFAIL。
+     * 绝不静默丢弃，客户端要么拿到应答、要么立刻收到 RCODE=2 而快速重试。
+     */
+    private void onDnsWatchdog(PendingDns expected, int attempt)
+    {
+        if (closed || pendingDns != expected)
+        {
+            return;
+        }
+
+        if (attempt <= DNS_MAX_RETRY)
+        {
+            DnsStats.recordRetry();
+            VPNLog.w("VPNLog", "DNSWATCH retry attempt=" + attempt + " " + ipAndPort);
+
+            if (writeDnsPayload(expected.payload))
+            {
+                try
+                {
+                    dnsWatchdogFuture = DNS_WATCHDOG_EXECUTOR.schedule(
+                            () -> onDnsWatchdog(expected, attempt + 1), DNS_RETRY_DELAY_MS, TimeUnit.MILLISECONDS);
+                    return;
+                }
+                catch (Throwable ignored)
+                {
+                }
+            }
+        }
+
+        DnsStats.recordServfail();
+        VPNLog.w("VPNLog", "DNSWATCH no reply, reply SERVFAIL " + ipAndPort);
+
+        byte[] servfail = DnsMessage.buildServFailResponse(expected.payload, 0, expected.payload.length);
+
+        if (servfail != null)
+        {
+            sendDnsResponse(servfail, expected.serverAddress, expected.serverPort);
+        }
+
+        pendingDns = null;
+    }
+
+    private boolean writeDnsPayload(byte[] payload)
+    {
+        DatagramChannel target = channel;
+
+        if (target == null || !target.isConnected())
+        {
+            return false;
+        }
+
+        try
+        {
+            ByteBuffer buffer = ByteBuffer.wrap(payload);
+
+            while (buffer.hasRemaining())
+            {
+                target.write(buffer);
+            }
+
+            return true;
+        }
+        catch (Throwable e)
+        {
+            VPNLog.w(TAG, "DNS retry write failed: " + e);
+            return false;
+        }
+    }
 
     public void initConnection()
     {
         InetAddress destinationAddress = referencePacket.ip4Header.destinationAddress;
-
-        if (referencePacket.udpHeader.destinationPort == 53)
-        {
-            DnsStats.recordQuery();
-        }
         int destinationPort = referencePacket.udpHeader.destinationPort;
 
         originalDestination = destinationAddress;
         originalDestinationPort = destinationPort;
+
+        // 53 端口：先做查询分类/AAAA 本地拦截
+        if (destinationPort == DNS_PORT)
+        {
+            if (handleDnsQuery(referencePacket, destinationAddress, destinationPort))
+            {
+                // AAAA 查询已本地回 NODATA，不需要建通道；把只用于本地应答的隧道移除
+                vpnServer.closeUDPConn(this);
+                return;
+            }
+        }
 
         // 代理开关打开时，游戏 UDP 也走 SOCKS5 UDP 中继（机场）；DNS 除外（保持直连劫持）。
         // 节点不支持 UDP / mihomo 没启动时 initProxyUdp 会失败，自动回退直连（方案 A）。
@@ -364,6 +682,22 @@ public class UDPTunnel implements KeyHandler
         {
             VPNLog.w(TAG, "initConnection failed dest=" + destinationAddress + ":" + destinationPort
                     + " error=" + e);
+
+            // 就绪竞态兜底：DNS 通道没建起来时别静默丢查询，本地回 SERVFAIL 让客户端立刻重试
+            if (destinationPort == DNS_PORT && pendingDns != null)
+            {
+                DnsStats.recordServfail();
+                byte[] servfail = DnsMessage.buildServFailResponse(
+                        pendingDns.payload, 0, pendingDns.payload.length);
+
+                if (servfail != null)
+                {
+                    sendDnsResponse(servfail, pendingDns.serverAddress, pendingDns.serverPort);
+                }
+
+                pendingDns = null;
+            }
+
             SocketUtils.closeResources(channel);
             channel = null;
             closeUdpControl();
@@ -373,6 +707,11 @@ public class UDPTunnel implements KeyHandler
 
         referencePacket.swapSourceAndDestination();
         addToNetWorkPacket(referencePacket);
+
+        if (destinationPort == DNS_PORT)
+        {
+            armDnsWatchdog();
+        }
     }
 
     /**
@@ -503,12 +842,30 @@ public class UDPTunnel implements KeyHandler
 
     public void processPacket(Packet packet)
     {
+        // 同一条 UDP 会话上后续的查询：AAAA 也一样本地拦截（客户端可能复用端口换查询类型）
+        if (packet.udpHeader != null && packet.udpHeader.destinationPort == DNS_PORT)
+        {
+            if (handleDnsQuery(packet, packet.ip4Header.destinationAddress, DNS_PORT))
+            {
+                return;
+            }
+        }
+
         addToNetWorkPacket(packet);
         updateInterests();
+
+        if (packet.udpHeader != null && packet.udpHeader.destinationPort == DNS_PORT)
+        {
+            armDnsWatchdog();
+        }
     }
 
     public void close()
     {
+        closed = true;
+        pendingDns = null;
+        cancelDnsWatchdog();
+
         try
         {
             closeUdpControl();

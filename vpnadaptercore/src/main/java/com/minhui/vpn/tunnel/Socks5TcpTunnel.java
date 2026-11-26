@@ -24,9 +24,16 @@ public class Socks5TcpTunnel extends RawTcpTunnel
     }
 
     @Override
+    protected boolean viaProxy()
+    {
+        return true;
+    }
+
+    @Override
     protected void onConnected() throws Exception
     {
         SocketChannel channel = innerChannel();
+        long startedAt = System.currentTimeMillis();
 
         try
         {
@@ -36,7 +43,9 @@ public class Socks5TcpTunnel extends RawTcpTunnel
         }
         catch (IOException e)
         {
-            VPNLog.d(TAG, "SOCKS5 handshake failed for " + mDestAddress + ": " + e.getMessage());
+            VPNLog.w("VPNLog", "TCPCONN socks5-fail target=" + mDestAddress
+                    + " elapsed=" + (System.currentTimeMillis() - startedAt) + "ms"
+                    + " err=" + e.getClass().getSimpleName() + "(" + e.getMessage() + ")");
             throw e;
         }
 

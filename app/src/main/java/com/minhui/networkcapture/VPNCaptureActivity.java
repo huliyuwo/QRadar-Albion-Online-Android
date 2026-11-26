@@ -69,6 +69,10 @@ public class VPNCaptureActivity extends FragmentActivity
 
             // VPN 刚建好时 DNS 链路可能还没通：做一次带重试的解析自检，并检查系统私人 DNS
             com.minhui.networkcapture.Utils.NetworkReadiness.checkAsync(context);
+
+            // onVpnStart 回调早于 tun 真正建立：延迟 5s 再探一次（这次流量会经过 VPN），
+            // 用于取证"VPN 内 IPv6 不可达 / DNS 还会不会下发 AAAA"
+            com.minhui.networkcapture.Utils.NetworkReadiness.checkTunnelAfterReadyAsync(context, 5000L);
         }
 
         @Override

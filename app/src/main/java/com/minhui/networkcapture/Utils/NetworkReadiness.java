@@ -10,6 +10,8 @@ import android.provider.Settings;
 import android.util.Log;
 import android.widget.Toast;
 
+import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.Socket;
@@ -29,6 +31,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>注意：本应用的流量被排除在自身 VPN 之外，这里的解析/连接验证的是设备到
  * Albion 接入点的物理链路；隧道侧是否真的收到 DNS 包，看 {@link com.minhui.vpn.tunnel.DnsStats}
  * 的 DNSSTATS 计数。
+ *
+ * <p>另外提供 {@link #checkTunnelAfterReadyAsync}：VPN 隧道真正建立后再探一次，
+ * 这次探测会经过 VPN，用于验证"VPN 内 IPv6 不可达、只下发 A 才能稳定连上"这一结论。
  */
 public final class NetworkReadiness
 {
@@ -37,6 +42,11 @@ public final class NetworkReadiness
     private static final int PROBE_TCP_PORT = 443;
     private static final int MAX_ATTEMPTS = 3;
     private static final int TCP_TIMEOUT_MS = 5000;
+    private static final int IPV6_TIMEOUT_MS = 3000;
+    /** live.albiononline.com 的 Gcore CDN AAAA 地址（用来验证 VPN 内 IPv6 是否可用）。 */
+    private static final String PROBE_IPV6_LITERAL = "2a03:90c0:9995::9995";
+    /** live.albiononline.com 的 Gcore CDN A 地址（用来验证 VPN 内 IPv4 是否可用）。 */
+    private static final String PROBE_IPV4_LITERAL = "92.223.95.95";
 
     private NetworkReadiness()
     {
@@ -65,6 +75,155 @@ public final class NetworkReadiness
         }
 
         new Thread(() -> runChecks(app, main), "radar-network-readiness").start();
+    }
+
+    /**
+     * 隧道建立后再探一次（延迟执行，避开 onVpnStart 回调早于 tun 建立的时间窗）。
+     *
+     * <p>这次 DNS/连接会真正经过 VPN，用于取证：
+     * <ul>
+     *   <li>DNS 是否还返回 AAAA（修复后应为 0）；</li>
+     *   <li>VPN 内 IPv6 TCP 连接是否失败（本机 IPv6 在 VPN 内没有可用路由）；</li>
+     *   <li>IPv4 TCP 是否正常。</li>
+     * </ul>
+     */
+    public static void checkTunnelAfterReadyAsync(Context context, long delayMs)
+    {
+        if (context == null)
+        {
+            return;
+        }
+
+        Context app = context.getApplicationContext();
+        Handler main = new Handler(Looper.getMainLooper());
+
+        main.postDelayed(() ->
+                new Thread(() -> runTunnelProbe(app), "radar-tunnel-probe").start(), Math.max(0, delayMs));
+    }
+
+    private static void runTunnelProbe(Context app)
+    {
+        if (!com.minhui.vpn.utils.VpnServiceHelper.vpnRunningStatus())
+        {
+            Log.d(TAG, "readiness2: vpn not running, skip tunnel probe");
+            return;
+        }
+
+        long startedAt = System.currentTimeMillis();
+        InetAddress ipv4 = null;
+        InetAddress ipv6 = null;
+        int ipv4Count = 0;
+        int ipv6Count = 0;
+
+        try
+        {
+            InetAddress[] addresses = InetAddress.getAllByName(PROBE_HOST);
+
+            for (InetAddress address : addresses)
+            {
+                if (address instanceof Inet4Address)
+                {
+                    ipv4Count++;
+
+                    if (ipv4 == null)
+                    {
+                        ipv4 = address;
+                    }
+                }
+                else if (address instanceof Inet6Address)
+                {
+                    ipv6Count++;
+
+                    if (ipv6 == null)
+                    {
+                        ipv6 = address;
+                    }
+                }
+            }
+
+            Log.d(TAG, "readiness2: dns " + PROBE_HOST + " total=" + addresses.length
+                    + " v4=" + ipv4Count + " v6=" + ipv6Count
+                    + " took=" + (System.currentTimeMillis() - startedAt) + "ms");
+        }
+        catch (Throwable e)
+        {
+            Log.w(TAG, "readiness2: dns failed: " + e);
+        }
+
+        // VPN 内 IPv6 探测：修复前这里通常失败（No route to host / Network unreachable），
+        // 正好说明"客户端拿到 AAAA 就会偶发连不上"。
+        if (ipv6 != null)
+        {
+            testTcpConnect("readiness2-v6", ipv6, IPV6_TIMEOUT_MS);
+        }
+        else
+        {
+            Log.d(TAG, "readiness2: no AAAA returned, skip ipv6 tcp probe (expected after AAAA filter)");
+        }
+
+        if (ipv4 != null)
+        {
+            testTcpConnect("readiness2-v4", ipv4, TCP_TIMEOUT_MS);
+        }
+
+        // 不依赖 DNS 的固定地址探测：证明 VPN 内 IPv6 不可路由、IPv4 通路正常，
+        // 这样即使 DNS 已过滤 AAAA，也能留下"为什么必须过滤"的直接证据。
+        try
+        {
+            InetAddress v6Literal = InetAddress.getByName(PROBE_IPV6_LITERAL);
+            testTcpConnect("readiness2-v6-literal", v6Literal, IPV6_TIMEOUT_MS);
+        }
+        catch (Throwable e)
+        {
+            Log.w(TAG, "readiness2: v6 literal parse failed: " + e);
+        }
+
+        try
+        {
+            InetAddress v4Literal = InetAddress.getByName(PROBE_IPV4_LITERAL);
+            testTcpConnect("readiness2-v4-literal", v4Literal, TCP_TIMEOUT_MS);
+        }
+        catch (Throwable e)
+        {
+            Log.w(TAG, "readiness2: v4 literal parse failed: " + e);
+        }
+
+        try
+        {
+            Log.d(TAG, "readiness2: summary " + com.minhui.vpn.tunnel.DnsStats.summary()
+                    + " | " + com.minhui.vpn.tunnel.TcpStats.summary());
+        }
+        catch (Throwable ignored)
+        {
+        }
+    }
+
+    private static void testTcpConnect(String label, InetAddress address, int timeoutMs)
+    {
+        Socket socket = new Socket();
+        long startedAt = System.currentTimeMillis();
+
+        try
+        {
+            socket.connect(new InetSocketAddress(address, PROBE_TCP_PORT), timeoutMs);
+            Log.d(TAG, label + " tcp " + PROBE_TCP_PORT + " ok addr=" + address.getHostAddress()
+                    + " took=" + (System.currentTimeMillis() - startedAt) + "ms");
+        }
+        catch (Throwable e)
+        {
+            Log.w(TAG, label + " tcp " + PROBE_TCP_PORT + " failed addr=" + address.getHostAddress()
+                    + " took=" + (System.currentTimeMillis() - startedAt) + "ms err=" + e);
+        }
+        finally
+        {
+            try
+            {
+                socket.close();
+            }
+            catch (Throwable ignored)
+            {
+            }
+        }
     }
 
     private static void runChecks(Context app, Handler main)
