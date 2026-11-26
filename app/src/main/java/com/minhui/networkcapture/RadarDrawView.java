@@ -25,6 +25,7 @@ import android.view.WindowManager;
 import android.widget.LinearLayout;
 
 import com.minhui.networkcapture.RadarActivities.RadarFloatingActivity;
+import com.minhui.networkcapture.RadarActivities.RadarQuickOptionsPanel;
 import com.minhui.networkcapture.RadarView.RadarSettings;
 import com.minhui.networkcapture.RadarView.RadarView;
 import com.minhui.vpn.Handlers.MainHandler;
@@ -66,6 +67,12 @@ public class RadarDrawView extends Service
     };
     private View overlaySettingsView;
     View radarFloatingSettingsView;
+
+    /** 内嵌「快速渲染选项」面板：独立悬浮 View，位置贴在雷达视窗旁边，打开时不遮挡整个屏幕。 */
+    private View radarQuickOptionsView;
+    private RadarQuickOptionsPanel quickOptionsPanel;
+    private WindowManager.LayoutParams layoutParamsQuickOptions;
+    private boolean quickOptionsAdded = false;
     boolean onLongMove = false;
     int screenWidth =0;
     int screenHeight =0;
@@ -189,6 +196,8 @@ public class RadarDrawView extends Service
         removeViewSafely(overlayView);
         removeViewSafely(overlaySettingsView);
         removeViewSafely(radarFloatingSettingsView);
+        removeViewSafely(radarQuickOptionsView);
+        quickOptionsAdded = false;
 
         try
         {
@@ -202,6 +211,8 @@ public class RadarDrawView extends Service
         overlayView = null;
         overlaySettingsView = null;
         radarFloatingSettingsView = null;
+        radarQuickOptionsView = null;
+        quickOptionsPanel = null;
         radarDrawView = null;
     }
 
@@ -409,7 +420,8 @@ public class RadarDrawView extends Service
         // Add the overlay view to the window manager
         windowManager.addView(overlayView, layoutParams);
 
-        WindowManager.LayoutParams layoutParamsSettingsFloatingView = new WindowManager.LayoutParams(
+        // 注意：必须写到字段上，positionSettingsPanel() 依赖它把面板摆到齿轮正下方
+        layoutParamsSettingsFloatingView = new WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.WRAP_CONTENT,
                 WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, // This type ensures the view overlays on other apps
@@ -508,6 +520,11 @@ public class RadarDrawView extends Service
                 {
                     saveFloatingPosition();
                 }
+                else if (isQuickRenderOptionsVisible())
+                {
+                    // 快速选项面板打开时，再点齿轮 = 关闭面板（不跳回小面板）
+                    hideQuickRenderOptions();
+                }
                 else
                 {
                     toggleSettingsPanel();
@@ -594,6 +611,158 @@ public class RadarDrawView extends Service
         if (radarFloatingSettingsView != null)
         {
             radarFloatingSettingsView.setVisibility(View.GONE);
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 内嵌快速渲染选项面板（悬浮窗内直接调参，不再跳转 Activity）
+    // ------------------------------------------------------------------
+
+    /** 快速渲染选项面板当前是否展开。 */
+    public boolean isQuickRenderOptionsVisible()
+    {
+        return quickOptionsAdded && radarQuickOptionsView != null
+                && radarQuickOptionsView.getVisibility() == View.VISIBLE;
+    }
+
+    /** 在雷达视窗旁边展开内嵌「快速渲染选项」面板；雷达照常渲染，不离开游戏。 */
+    public void showQuickRenderOptions()
+    {
+        if (windowManager == null)
+        {
+            return;
+        }
+
+        // 先收起齿轮小面板，避免两个悬浮面板互相重叠
+        hideRadarSettingsPanel();
+
+        if (radarQuickOptionsView == null)
+        {
+            quickOptionsPanel = new RadarQuickOptionsPanel(this, new RadarQuickOptionsPanel.Listener()
+            {
+                @Override
+                public void onClose()
+                {
+                    hideQuickRenderOptions();
+                }
+
+                @Override
+                public void onOpenFullSettings()
+                {
+                    openRenderOptionsActivity();
+                }
+            });
+            radarQuickOptionsView = quickOptionsPanel.getView();
+        }
+
+        // 每次打开都按最新 RadarSettings 重建，保证与完整设置页互相同步
+        quickOptionsPanel.refresh();
+
+        if (!quickOptionsAdded)
+        {
+            layoutParamsQuickOptions = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    getWindowType(),
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
+                            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN |
+                            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+                    PixelFormat.TRANSLUCENT);
+            layoutParamsQuickOptions.gravity = Gravity.TOP | Gravity.START;
+
+            try
+            {
+                windowManager.addView(radarQuickOptionsView, layoutParamsQuickOptions);
+                quickOptionsAdded = true;
+            }
+            catch (Throwable e)
+            {
+                Log.e("RadarDiag", "showQuickRenderOptions failed: " + e);
+                radarQuickOptionsView = null;
+                quickOptionsPanel = null;
+                return;
+            }
+        }
+
+        radarQuickOptionsView.setVisibility(View.VISIBLE);
+        positionQuickOptionsPanel();
+        Log.d("RadarDiag", "quick render options shown");
+    }
+
+    /** 收起内嵌快速选项面板（关闭按钮 / 再点齿轮），游戏与雷达不受影响。 */
+    public void hideQuickRenderOptions()
+    {
+        if (radarQuickOptionsView != null && quickOptionsAdded)
+        {
+            removeViewSafely(radarQuickOptionsView);
+            quickOptionsAdded = false;
+        }
+    }
+
+    /** 打开完整渲染选项页（保留独立任务栈：返回直接回到游戏）。 */
+    public void openRenderOptionsActivity()
+    {
+        hideQuickRenderOptions();
+        hideRadarSettingsPanel();
+
+        try
+        {
+            Intent intent = new Intent(this, com.minhui.networkcapture.RadarActivities.RenderOptionsActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            startActivity(intent);
+        }
+        catch (Throwable e)
+        {
+            Log.e("RadarDiag", "openRenderOptionsActivity failed: " + e);
+        }
+    }
+
+    /** 把快速选项面板摆在雷达视窗旁边：优先右侧，放不下翻到左侧；竖向贴齐雷达并限制在屏幕内。 */
+    private void positionQuickOptionsPanel()
+    {
+        if (!quickOptionsAdded || radarQuickOptionsView == null || layoutParamsQuickOptions == null)
+        {
+            return;
+        }
+
+        refreshScreenMetrics();
+
+        int width = Math.min(dpToPx(300), Math.max(dpToPx(220), screenWidth - dpToPx(32)));
+        int maxHeight = Math.max(dpToPx(240), screenHeight - 2 * topInset());
+        int height = Math.min(dpToPx(420), maxHeight);
+
+        int radarX = layoutParams != null ? layoutParams.x : 0;
+        int radarY = layoutParams != null ? layoutParams.y : 0;
+        int radarWidth = layoutParams != null ? layoutParams.width : 0;
+        int gap = dpToPx(10);
+
+        int x = radarX + radarWidth + gap;
+
+        if (x + width > screenWidth)
+        {
+            x = radarX - gap - width;
+        }
+
+        if (x < 0)
+        {
+            x = clamp(screenWidth - width - dpToPx(8), 0, Math.max(0, screenWidth - width));
+        }
+
+        int y = clamp(radarY, 0, Math.max(0, screenHeight - height));
+
+        layoutParamsQuickOptions.width = width;
+        layoutParamsQuickOptions.height = height;
+        layoutParamsQuickOptions.x = x;
+        layoutParamsQuickOptions.y = y;
+
+        try
+        {
+            windowManager.updateViewLayout(radarQuickOptionsView, layoutParamsQuickOptions);
+        }
+        catch (Throwable e)
+        {
+            Log.w("RadarDiag", "positionQuickOptionsPanel failed: " + e);
         }
     }
 
@@ -686,6 +855,11 @@ public class RadarDrawView extends Service
             if (showRadarActivitySettings)
             {
                 positionSettingsPanel();
+            }
+
+            if (isQuickRenderOptionsVisible())
+            {
+                positionQuickOptionsPanel();
             }
         }
         catch (Throwable e)

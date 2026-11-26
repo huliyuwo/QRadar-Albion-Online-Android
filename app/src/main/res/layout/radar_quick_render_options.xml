@@ -1,0 +1,134 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    悬浮窗内嵌「快速渲染选项」面板（不再跳转 RenderOptionsActivity）。
+
+    窗口由 RadarDrawView 用 WindowManager 以独立悬浮 View 的形式添加，位置固定在雷达视窗旁边，
+    不遮挡整个屏幕；面板本身是深色半透明卡片：
+
+      标题栏（渲染选项 / 立即生效 / ✕）
+      横向选项卡（雷达 / 资源 / 敌人 / 玩家 / 箱子）
+      ScrollView + 开关列表（由 RadarQuickOptionsPanel 运行时按 tab 构建）
+      底部（更多设置… / 关闭）
+
+    内容行全部由 RadarQuickOptionsPanel 在 Java 里构建：所有开关直接读写 RadarSettings 单例
+    并持久化到 SharedPreferences（与 RenderOptionsActivity 共用同一套 key），渲染线程下一帧生效。
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/quickRoot"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_radar_quick_panel"
+    android:orientation="vertical"
+    android:paddingStart="8dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="8dp"
+    android:paddingBottom="6dp">
+
+    <!-- 标题栏 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/quickTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="渲染选项"
+            android:textColor="#F4840B"
+            android:textSize="15sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/quickSubtitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:gravity="end"
+            android:paddingEnd="8dp"
+            android:text="快速开关 · 立即生效"
+            android:textColor="#90A4AE"
+            android:textSize="10sp" />
+
+        <TextView
+            android:id="@+id/quickHeaderClose"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:paddingStart="10dp"
+            android:paddingTop="2dp"
+            android:paddingEnd="4dp"
+            android:paddingBottom="4dp"
+            android:text="✕"
+            android:textColor="#90A4AE"
+            android:textSize="14sp" />
+    </LinearLayout>
+
+    <!-- 横向选项卡 -->
+    <HorizontalScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:fillViewport="false"
+        android:scrollbars="none">
+
+        <LinearLayout
+            android:id="@+id/quickTabRow"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal" />
+    </HorizontalScrollView>
+
+    <!-- 当前 tab 的开关列表（可滚动） -->
+    <ScrollView
+        android:id="@+id/quickScroll"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true"
+        android:scrollbarStyle="outsideOverlay"
+        android:scrollbars="vertical">
+
+        <LinearLayout
+            android:id="@+id/quickContent"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </ScrollView>
+
+    <!-- 底部按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/quickMore"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:background="?android:attr/selectableItemBackground"
+            android:gravity="start|center_vertical"
+            android:padding="8dp"
+            android:text="更多设置…"
+            android:textColor="#90A4AE"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/quickClose"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:background="?android:attr/selectableItemBackground"
+            android:gravity="center"
+            android:paddingStart="16dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="16dp"
+            android:paddingBottom="8dp"
+            android:text="关闭"
+            android:textColor="#F4840B"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+</LinearLayout>

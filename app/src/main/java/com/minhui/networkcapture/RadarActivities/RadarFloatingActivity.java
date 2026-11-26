@@ -16,11 +16,15 @@ import com.minhui.networkcapture.RadarDrawView;
 import com.minhui.networkcapture.RadarView.RadarView;
 
 /**
- * 悬浮窗齿轮面板。
+ * 悬浮窗齿轮面板（齿轮按钮点开后的小面板）。
  *
- * <p>旧版这里是 PVP / 采集 / 怪物 / 箱子 四个零散设置标签（会直接在 overlay 里 inflate 旧设置页，
- * 容易在 Service 上下文里闪退）。现在这些设置全部并入「渲染选项」统一页，悬浮面板只保留一个
- * 入口按钮：点击后以 Activity 形式打开渲染选项页（不再在 Service 上下文里构建设置界面）。
+ * <p>上一版这里只有一个「渲染选项 ▸」按钮，点击会 startActivity 跳到 RenderOptionsActivity，
+ * 需要离开游戏才能改渲染参数。现在默认入口改成悬浮窗内嵌的「快速渲染选项」面板：
+ * 点击按钮由 {@link RadarDrawView#showQuickRenderOptions()} 在同层悬浮窗里展开选项卡 + 开关列表，
+ * 雷达继续渲染，开关下一帧生效。
+ *
+ * <p>原来的完整设置页 {@link RenderOptionsActivity} 仍然保留，面板下方提供「更多设置…」入口，
+ * 独立任务栈属性不变（返回直接回到游戏）。
  */
 public class RadarFloatingActivity
 {
@@ -43,24 +47,24 @@ public class RadarFloatingActivity
         int corner = Math.round(8 * context.getResources().getDisplayMetrics().density);
         int hintTop = Math.round(8 * context.getResources().getDisplayMetrics().density);
 
-        TextView openRenderOptions = new TextView(context);
-        openRenderOptions.setText("渲染选项 ▸");
-        openRenderOptions.setTextColor(Color.WHITE);
-        openRenderOptions.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
-        openRenderOptions.setGravity(Gravity.CENTER);
-        openRenderOptions.setPadding(padding, paddingY, padding, paddingY);
+        TextView openQuickOptions = new TextView(context);
+        openQuickOptions.setText("渲染选项 ▸");
+        openQuickOptions.setTextColor(Color.WHITE);
+        openQuickOptions.setTextSize(TypedValue.COMPLEX_UNIT_SP, 15);
+        openQuickOptions.setGravity(Gravity.CENTER);
+        openQuickOptions.setPadding(padding, paddingY, padding, paddingY);
 
         GradientDrawable background = new GradientDrawable();
         background.setColor(0xFFF4840B);
         background.setCornerRadius(corner);
-        openRenderOptions.setBackground(background);
+        openQuickOptions.setBackground(background);
 
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-        contentLayout.addView(openRenderOptions, params);
+        contentLayout.addView(openQuickOptions, params);
 
         TextView hint = new TextView(context);
-        hint.setText("资源 / 敌人 / 玩家 / 箱子 / 雷达显示");
+        hint.setText("雷达 / 资源 / 敌人 / 玩家 / 箱子 · 悬浮窗内直接调");
         hint.setTextColor(0xFF90A4AE);
         hint.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11);
         hint.setGravity(Gravity.CENTER);
@@ -70,18 +74,39 @@ public class RadarFloatingActivity
                 LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
         contentLayout.addView(hint, hintParams);
 
-        openRenderOptions.setOnClickListener(v ->
-        {
-            Intent intent = new Intent(context, RenderOptionsActivity.class);
-            // 从悬浮窗（Service 上下文）启动 Activity 必须带 NEW_TASK
-            // 独立任务栈：按返回直接回到游戏，而不是回到雷达首页
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-            context.startActivity(intent);
+        // 完整设置页入口（保留旧 Activity，独立任务栈跳转，返回直接回游戏）
+        TextView openFullSettings = new TextView(context);
+        openFullSettings.setText("更多设置…");
+        openFullSettings.setTextColor(0xFF90A4AE);
+        openFullSettings.setTextSize(TypedValue.COMPLEX_UNIT_SP, 12);
+        openFullSettings.setGravity(Gravity.CENTER);
+        openFullSettings.setPadding(0, hintTop, 0, 0);
 
+        LinearLayout.LayoutParams moreParams = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        contentLayout.addView(openFullSettings, moreParams);
+
+        openQuickOptions.setOnClickListener(v ->
+        {
             if (radarDrawView != null)
             {
-                radarDrawView.hideRadarSettingsPanel();
+                // 在悬浮窗里展开内嵌快速选项面板（自动收起当前小面板）
+                radarDrawView.showQuickRenderOptions();
             }
+        });
+
+        openFullSettings.setOnClickListener(v ->
+        {
+            if (radarDrawView != null)
+            {
+                radarDrawView.openRenderOptionsActivity();
+                return;
+            }
+
+            // 兜底：雷达服务不在时仍然能打开完整设置页
+            Intent intent = new Intent(context, RenderOptionsActivity.class);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+            context.startActivity(intent);
         });
     }
 }
