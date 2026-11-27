@@ -20,6 +20,7 @@ import com.minhui.networkcapture.R;
 import com.minhui.networkcapture.RadarView.RadarSettings;
 import com.minhui.vpn.zone.ZoneState;
 
+import java.util.HashSet;
 import java.util.function.Consumer;
 import java.util.function.IntConsumer;
 
@@ -70,6 +71,9 @@ public class RadarQuickOptionsPanel
     private final LinearLayout tabRow;
     private final ScrollView quickScroll;
     private final LinearLayout quickContent;
+
+    /** 资源 tab 里已展开等级矩阵的类别（重建列表时保持展开状态）。 */
+    private final HashSet<String> expandedKinds = new HashSet<>();
 
     private int currentTab = 0;
 
@@ -228,6 +232,14 @@ public class RadarQuickOptionsPanel
                     RadarSettings.putBoolean(context, "radarTierBadges", checked);
                 });
 
+        // 取证用：角标额外显示解析层原始 tier（T5r4 = 显示 T5 / 原始 4），默认关闭
+        addSwitchRow(quickContent, "等级调试角标", "角标附带解析层原始 tier（T4r4），仅用于核对基准",
+                settings.resTierDebugBadge, checked ->
+                {
+                    settings.resTierDebugBadge = checked;
+                    RadarSettings.putBoolean(context, "resTierDebugBadge", checked);
+                });
+
         addSwitchRow(quickContent, "资源数量标签", "资源下方显示剩余数量", settings.radarResourceCount,
                 checked ->
                 {
@@ -296,7 +308,8 @@ public class RadarQuickOptionsPanel
     // ------------------------------------------------------------------
     private void buildResourceTab()
     {
-        addHint(quickContent, "五类总开关 + 静态 / 活体矩阵全开全关（与完整设置页同一套数据）");
+        addHint(quickContent, "五类总开关 + 静态/活体全开全关；展开「等级矩阵」可按 T1–T8 × E0–E4 "
+                + "逐格勾选是否显示（与完整设置页同一套 key，双向同步）");
 
         for (String kind : RESOURCE_ORDER)
         {
@@ -314,7 +327,7 @@ public class RadarQuickOptionsPanel
                 });
     }
 
-    /** 一类资源：类别总开关 + Static / Living 两个「全开 / 全关」子开关。 */
+    /** 一类资源：类别总开关 + Static / Living 全开全关 + 可展开的 T1–T8 × E0–E4 矩阵。 */
     private void addResourceKindBlock(LinearLayout parent, final String kind)
     {
         LinearLayout card = new LinearLayout(context);
@@ -367,7 +380,169 @@ public class RadarQuickOptionsPanel
                 0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
 
         card.addView(subRow);
+
+        // 第三行：展开 / 收起等级矩阵
+        final boolean expanded = expandedKinds.contains(kind);
+
+        TextView expander = new TextView(context);
+        expander.setText(expanded ? "▾ 收起等级矩阵" : "▸ 等级矩阵 T1–T8 × E0–E4");
+        expander.setTextColor(COLOR_ACCENT);
+        expander.setTextSize(TypedValue.COMPLEX_UNIT_SP, 10);
+        expander.setGravity(Gravity.CENTER_VERTICAL);
+        expander.setPadding(px(2), px(4), px(2), px(2));
+        expander.setOnClickListener(v ->
+        {
+            if (!expandedKinds.remove(kind))
+            {
+                expandedKinds.add(kind);
+            }
+
+            rebuildContent();
+        });
+        card.addView(expander, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+
+        if (expanded)
+        {
+            addResourceMatrix(card, kind, false);
+            addResourceMatrix(card, kind, true);
+        }
+
         parent.addView(card, cardParams);
+    }
+
+    /**
+     * 紧凑等级矩阵：E0~E4 行 × T1~T8 列，每格一个小色块开关。
+     * 点格子 = 单格开关；点 T 列标题 = 整列；点 E 行标签 = 整行。
+     * 直接读写 {@link RadarSettings#getResourceMatrix} 并用 {@link RadarSettings#saveResourceMatrices}
+     * 持久化到与完整设置页相同的 resStatic_/resLiving_ key。
+     */
+    private void addResourceMatrix(LinearLayout parent, final String kind, final boolean living)
+    {
+        final boolean[][] matrix = settings.getResourceMatrix(living, kind);
+        final int cellW = px(27);
+        final int cellH = px(22);
+        final int labelW = px(26);
+
+        TextView label = new TextView(context);
+        label.setText((living ? "活体 Living" : "静态 Static")
+                + "（点 T 列 / E 行 = 整列 / 整行）");
+        label.setTextColor(COLOR_TEXT_DIM);
+        label.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+        label.setPadding(px(2), px(5), 0, px(1));
+        parent.addView(label);
+
+        // 表头：T1 ~ T8（点一下 = 整列开关）
+        LinearLayout header = new LinearLayout(context);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+
+        TextView corner = new TextView(context);
+        corner.setLayoutParams(new LinearLayout.LayoutParams(labelW, px(20)));
+        header.addView(corner);
+
+        for (int tier = 0; tier < RadarSettings.MATRIX_TIERS; tier++)
+        {
+            final int column = tier;
+            boolean columnOn = isColumnAllOn(matrix, column);
+
+            TextView columnLabel = new TextView(context);
+            columnLabel.setText("T" + (tier + 1));
+            columnLabel.setTextColor(columnOn ? COLOR_ACCENT : COLOR_TEXT_DIM);
+            columnLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+            columnLabel.setGravity(Gravity.CENTER);
+            columnLabel.setBackground(rounded(columnOn ? 0xFF3A2A10 : COLOR_CARD_BG, 3));
+            columnLabel.setLayoutParams(new LinearLayout.LayoutParams(cellW, px(20)));
+            columnLabel.setOnClickListener(v ->
+            {
+                boolean next = !isColumnAllOn(matrix, column);
+                settings.setResourceColumn(living, kind, column, next);
+                settings.saveResourceMatrices(context, kind);
+                rebuildContent();
+            });
+            header.addView(columnLabel);
+        }
+
+        parent.addView(header);
+
+        for (int enchant = 0; enchant < RadarSettings.MATRIX_ENCHANTS; enchant++)
+        {
+            final int row = enchant;
+            boolean rowOn = isRowAllOn(matrix, row);
+
+            LinearLayout line = new LinearLayout(context);
+            line.setOrientation(LinearLayout.HORIZONTAL);
+            line.setGravity(Gravity.CENTER_VERTICAL);
+            line.setPadding(0, px(1), 0, 0);
+
+            TextView rowLabel = new TextView(context);
+            rowLabel.setText("E" + enchant);
+            rowLabel.setTextColor(rowOn ? COLOR_ACCENT : COLOR_TEXT_DIM);
+            rowLabel.setTextSize(TypedValue.COMPLEX_UNIT_SP, 9);
+            rowLabel.setGravity(Gravity.CENTER_VERTICAL);
+            rowLabel.setLayoutParams(new LinearLayout.LayoutParams(labelW, cellH));
+            rowLabel.setOnClickListener(v ->
+            {
+                boolean next = !isRowAllOn(matrix, row);
+                settings.setResourceRow(living, kind, row, next);
+                settings.saveResourceMatrices(context, kind);
+                rebuildContent();
+            });
+            line.addView(rowLabel);
+
+            for (int tier = 0; tier < RadarSettings.MATRIX_TIERS; tier++)
+            {
+                final int column = tier;
+                final boolean on = matrix[row][column];
+
+                final TextView cell = new TextView(context);
+                cell.setBackground(rounded(on ? COLOR_ACCENT : COLOR_CHIP_BG, 2));
+
+                // 每格之间留 1dp 缝隙，8 个小开关不会连成一条色带（关闭时是暗格，一眼可辨）
+                LinearLayout.LayoutParams cellParams = new LinearLayout.LayoutParams(cellW, cellH - px(2));
+                cellParams.rightMargin = px(1);
+                cellParams.topMargin = px(1);
+                cellParams.bottomMargin = px(1);
+                cell.setLayoutParams(cellParams);
+                cell.setOnClickListener(v ->
+                {
+                    boolean next = !matrix[row][column];
+                    settings.setResourceCell(living, kind, row, column, next);
+                    settings.saveResourceMatrices(context, kind);
+                    // 单格切换即时反映颜色，无需重建整页
+                    cell.setBackground(rounded(next ? COLOR_ACCENT : COLOR_CHIP_BG, 2));
+                });
+                line.addView(cell);
+            }
+
+            parent.addView(line);
+        }
+    }
+
+    private static boolean isColumnAllOn(boolean[][] matrix, int column)
+    {
+        for (int enchant = 0; enchant < RadarSettings.MATRIX_ENCHANTS; enchant++)
+        {
+            if (!matrix[enchant][column])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static boolean isRowAllOn(boolean[][] matrix, int row)
+    {
+        for (int tier = 0; tier < RadarSettings.MATRIX_TIERS; tier++)
+        {
+            if (!matrix[row][tier])
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /** 资源矩阵子开关：显示全开 / 部分 / 全关，点一下在「全开」与「全关」之间切换。 */

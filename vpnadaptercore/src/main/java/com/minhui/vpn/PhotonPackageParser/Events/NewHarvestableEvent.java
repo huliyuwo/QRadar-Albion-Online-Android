@@ -22,6 +22,7 @@ public class NewHarvestableEvent
     }
 
     private static int diagHarvestCount;
+    private static int harv1DiagCount;
 
     /** 临时诊断：把 NewHarvestableObject 的参数原样打出来，用于确认 1.32 的字段下标。 */
     private void logHarvestParams(HashMap<Object, Object> parameters)
@@ -69,10 +70,22 @@ public class NewHarvestableEvent
 
         int id = Utils.getNumber(parameters.get(0));
         int type = Utils.getNumber(parameters.get(5));
+        // 服务器 tier 是 1 基（T4 资源 = 4）。2026-11-27 在 Creag Morr（游戏内地图资源 IV–VI）实测：
+        // 单对象 rawTier=4、批量列表 rawTier=4/6，均与游戏内等级一致，因此这里不做任何换算，
+        // 存储层与渲染层统一使用 1 基（渲染层直接显示，不再 +1）。
         int tier = Utils.getNumber(parameters.get(7));
         float[] location = Utils.getFloats(parameters.get(8));
         int charges = Utils.getNumber(parameters.get(10));;
         int  enchant = Utils.getNumber(parameters.get(11));
+
+        // 等级基准取证：这里必须打「服务器原样 tier」，不要做任何换算。
+        if (harv1DiagCount++ < 40)
+        {
+            Log.d("RadarDiag", "HARV1 id=" + id + " type=" + type + " rawTier=" + tier
+                    + " enchant=" + enchant + " charges=" + charges
+                    + " pos=" + (location != null && location.length >= 2
+                    ? (location[0] + "," + location[1]) : "?"));
+        }
 
         MainHandler.getInstance().harvestablesHandler.removeHarvestable(id);
         MainHandler.getInstance().harvestablesHandler.addHarvestable(id, type, tier, location[0], location[1], charges, enchant);
@@ -164,11 +177,14 @@ public class NewHarvestableEvent
         {
             int id = a0[i];
             int type = a1[i];
+            // 批量列表的 tier 与单对象事件同为 1 基（实测 T4=4），不做换算。
             int tier = a2[i];
 
+            // 等级基准取证：批量列表事件同样打服务器原样 tier。
             if (tierDiagCount++ < 40)
             {
-                Log.d("RadarDiag", "HARV2 i=" + i + " type=" + (i < a1.length ? a1[i] : -1) + " tier=" + tier);
+                Log.d("RadarDiag", "HARV2 id=" + id + " type=" + type + " rawTier=" + tier
+                        + " charges=" + a4[i]);
             }
             float posX = a3[i * 2];
             float posY = a3[i * 2 + 1];

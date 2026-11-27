@@ -86,6 +86,11 @@ public class RadarSettings
     public float radarIconScale = 1f;
     /** 资源等级角标：true=按类别色块 + 等级/附魔，false=直接用图标。 */
     public boolean radarTierBadges = false;
+    /**
+     * 等级调试角标：打开后角标额外显示解析层原始 tier（例如 {@code T5r4}），
+     * 用来核对「服务器 tier 基准 / 显示层换算」是否差一级。默认关闭，仅用于取证。
+     */
+    public boolean resTierDebugBadge = false;
     /** 资源数量标签（节点剩余数量）。 */
     public boolean radarResourceCount = false;
     /** 资源距离标签（到本地玩家的码数）。 */
@@ -226,6 +231,7 @@ public class RadarSettings
         // 雷达/显示
         radarIconScale = sharedPreferences.getFloat("radarIconScale", 1f);
         radarTierBadges = sharedPreferences.getBoolean("radarTierBadges", false);
+        resTierDebugBadge = sharedPreferences.getBoolean("resTierDebugBadge", false);
         // 旧采集页的「Size」开关与新版「资源数量标签」是同一个效果，读取时合并成一个开关
         radarResourceCount = sharedPreferences.getBoolean("radarResourceCount", false) || harvestingSize;
         radarResourceDistance = sharedPreferences.getBoolean("radarResourceDistance", false);

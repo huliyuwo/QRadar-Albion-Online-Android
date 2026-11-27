@@ -138,4 +138,23 @@ public final class MobsResourceTable
     {
         return TYPE_IDS.length;
     }
+
+    // ------------------------------------------------------------------
+    // T1 活体资源默认策略
+    // ------------------------------------------------------------------
+    /**
+     * T1 活体资源（{@link com.minhui.vpn.PhotonPackageParser.enumerations.MobCodes#Harvestable} /
+     * {@link com.minhui.vpn.PhotonPackageParser.enumerations.MobCodes#Skinnable} 且 tier<=1）
+     * 默认完全不处理、不渲染：解析层直接丢弃，渲染层再防御性过滤一次。
+     *
+     * <p>硬编码默认行为（用户要求先不做 UI）；将来要做开关时，把它改成读取配置即可，
+     * 解析层与渲染层都引用这一个常量，避免两边不一致。
+     */
+    public static final boolean HIDE_T1_LIVING_RESOURCES = true;
+
+    /** 该活体资源 tier 是否按「T1 活体资源默认隐藏」处理（tier<=1）。 */
+    public static boolean isTier1LivingHidden(int tier)
+    {
+        return HIDE_T1_LIVING_RESOURCES && tier <= 1;
+    }
 }

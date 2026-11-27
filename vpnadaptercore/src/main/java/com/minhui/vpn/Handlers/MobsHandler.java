@@ -764,6 +764,7 @@ public class MobsHandler
 
     private static int diagLivingLogCount;
     private static int diagMobLogCount;
+    private static int diagSkipT1LivingCount;
 
     public void AddMob(int id, int typeId, String name, float posX, float posY, int health, int enchant, int rarity)
     {
@@ -835,6 +836,20 @@ public class MobsHandler
                     Log.d("RadarDiag", "mob? typeId=" + typeId + " tier=" + h.tier + " type=" + h.type
                             + " hp=" + health);
                 }
+            }
+
+            // T1 活体资源（可采集 / 可剥皮的怪）默认完全不处理：直接丢弃，不进入列表。
+            // 见 MobsResourceTable.HIDE_T1_LIVING_RESOURCES；渲染层还有一次防御性过滤。
+            if ((h.type == MobCodes.Harvestable || h.type == MobCodes.Skinnable)
+                    && MobsResourceTable.isTier1LivingHidden(h.tier))
+            {
+                if (diagSkipT1LivingCount++ < 20)
+                {
+                    Log.d("RadarDiag", "SKIP T1 living typeId=" + typeId + " kind=" + h.name
+                            + " tier=" + h.tier + " id=" + id + " hp=" + health);
+                }
+
+                return;
             }
 
             if (!mobsList.contains(h))

@@ -20,6 +20,7 @@ import com.minhui.vpn.Handlers.HandlerItem.Player;
 import com.minhui.vpn.Handlers.MainHandler;
 import com.minhui.vpn.PhotonPackageParser.Utils;
 import com.minhui.vpn.PhotonPackageParser.enumerations.MobCodes;
+import com.minhui.vpn.PhotonPackageParser.enumerations.MobsResourceTable;
 import com.minhui.vpn.zone.ZoneState;
 
 import org.greenrobot.eventbus.EventBus;
@@ -515,6 +516,7 @@ public class RadarView extends View
             MobCodes type = mob.getType() == null ? MobCodes.Enemy : mob.getType();
 
             if (!isLivingResourceType(type) || !isGroundPosition(mob.getPosX(), mob.getPosY())
+                    || MobsResourceTable.isTier1LivingHidden(mob.getTier())
                     || !isLivingResourceVisible(settings, mob, type))
             {
                 continue;
@@ -948,7 +950,9 @@ public class RadarView extends View
                 continue;
             }
 
-            int tier = Math.max(1, Math.min(8, harvestable.getTier() + 1));
+            // 解析层 tier 已是 1 基（T4 资源 = 4，2026-11-27 实测 HARV1/HARV2 与游戏内地图 IV-VI 吻合），
+            // 显示层直接使用，不再 +1（此前 +1 导致整体高一级：T4 显示 T5）。
+            int tier = Math.max(1, Math.min(8, harvestable.getTier()));
             int enchant = Math.max(0, Math.min(4, harvestable.getEnchant()));
 
             projectToScreen(harvestable.getPosX(), harvestable.getPosY(), lpX, lpY, k, cx, cy, tmpScreen);
@@ -966,7 +970,7 @@ public class RadarView extends View
 
             drawResourceMarker(canvas, tmpScreen[0], tmpScreen[1], iconPx, kind, tier, enchant,
                     false, width, harvestable.getCharges(), lpX, lpY,
-                    harvestable.getPosX(), harvestable.getPosY());
+                    harvestable.getPosX(), harvestable.getPosY(), harvestable.getTier());
 
             drawn++;
         }
@@ -977,7 +981,8 @@ public class RadarView extends View
     /** 画一个资源/活体资源标记（图标或色块 + 等级角标 + 可选数量/距离）。 */
     private void drawResourceMarker(Canvas canvas, float screenX, float screenY, float iconPx,
                                     String kind, int tier, int enchant, boolean living, int width,
-                                    int charges, float lpX, float lpY, float worldX, float worldY)
+                                    int charges, float lpX, float lpY, float worldX, float worldY,
+                                    int rawTier)
     {
         RadarSettings settings = RadarSettings.getInstance();
         float half = iconPx / 2f;
@@ -1018,7 +1023,7 @@ public class RadarView extends View
         }
 
         drawTierBadge(canvas, screenX, screenY, iconPx, living ? COLOR_MOB_LIVING : categoryColor,
-                tier, enchant, living);
+                tier, enchant, living, rawTier);
 
         float textY = screenY + iconPx * 0.85f;
         entityTextPaint.setColor(0xFFE0E0E0);
@@ -1063,8 +1068,8 @@ public class RadarView extends View
             return null;
         }
 
-        // 解析层 tier 是 0 基（T2 资源 tier=1），显示层统一换算成 1..8
-        int tier = Math.max(1, Math.min(8, harvestable.getTier() + 1));
+        // 解析层 tier 已是 1 基（T4=4），显示层与过滤层都直接使用，不再 +1。
+        int tier = Math.max(1, Math.min(8, harvestable.getTier()));
         int enchant = Math.max(0, Math.min(4, harvestable.getEnchant()));
 
         return settings.isStaticResourceEnabled(kind, tier, enchant) ? kind : null;
@@ -1106,6 +1111,13 @@ public class RadarView extends View
 
             if (isLivingResourceType(type))
             {
+                // 防御性过滤：T1 活体资源默认完全不渲染（解析层 MobsHandler 已经丢弃，
+                // 这里再兜底一次，避免其它途径加入的 T1 活体资源被画出来）。
+                if (MobsResourceTable.isTier1LivingHidden(clampedTier))
+                {
+                    continue;
+                }
+
                 // 活体资源（资源怪）：PC 语义 = 资源页的 Living 子项，按 类别 + 等级/附魔矩阵 控制；
                 // 未知 tier/enchant 默认显示（此前套用怪物等级矩阵，会把这类实体静默滤掉）。
                 if (!isLivingResourceVisible(settings, mob, type))
@@ -1131,7 +1143,7 @@ public class RadarView extends View
                 {
                     drawResourceMarker(canvas, tmpScreen[0], tmpScreen[1], iconPx, kind,
                             clampedTier, clampedEnchant, true, width, 0, lpX, lpY,
-                            mob.getPosX(), mob.getPosY());
+                            mob.getPosX(), mob.getPosY(), tier);
                 }
                 else
                 {
@@ -1142,7 +1154,7 @@ public class RadarView extends View
                     if (clampedTier >= 1)
                     {
                         drawTierBadge(canvas, tmpScreen[0], tmpScreen[1], iconPx,
-                                COLOR_MOB_LIVING, clampedTier, clampedEnchant, true);
+                                COLOR_MOB_LIVING, clampedTier, clampedEnchant, true, tier);
                     }
                 }
 
@@ -1651,12 +1663,21 @@ public class RadarView extends View
         return Math.max(14f, Math.min(80f, 32f * (width / PC_REFERENCE_CANVAS) * zoom * iconScale));
     }
 
-    /** 资源等级角标：图标左上角画 T{tier}，有附魔再画 +N（PC badge 语义）。 */
+    /** 资源等级角标：图标左上角画 T{tier}，有附魔再画 +N（PC badge 语义）。
+     *  {@code rawTier} 只用于「等级调试角标」（{@link RadarSettings#resTierDebugBadge}）显示解析层原值。 */
     private void drawTierBadge(Canvas canvas, float x, float y, float iconPx, int color,
-                               int tier, int enchant, boolean living)
+                               int tier, int enchant, boolean living, int rawTier)
     {
+        final boolean debugTier = RadarSettings.getInstance().resTierDebugBadge;
         float badgeH = Math.max(11f, iconPx * 0.42f);
         float badgeW = badgeH * (enchant > 0 ? 2.5f : 1.35f);
+
+        if (debugTier)
+        {
+            // 额外显示原始 tier（例如 T5r4），需要更宽的底
+            badgeW = badgeH * (enchant > 0 ? 4.2f : 2.6f);
+        }
+
         float left = x - iconPx / 2f;
         float top = y - iconPx / 2f;
 
@@ -1673,15 +1694,22 @@ public class RadarView extends View
 
         String tierText = tier >= 1 ? "T" + tier : "T?";
 
+        if (debugTier)
+        {
+            tierText = tierText + "r" + rawTier;
+        }
+
         if (enchant > 0)
         {
-            badgeTextPaint.setTextSize(badgeH * 0.82f);
-            canvas.drawText(tierText, left + badgeW * 0.28f, top + badgeH * 0.82f, badgeTextPaint);
-            canvas.drawText("+" + enchant, left + badgeW * 0.74f, top + badgeH * 0.82f, badgeTextPaint);
+            badgeTextPaint.setTextSize(badgeH * (debugTier ? 0.62f : 0.82f));
+            canvas.drawText(tierText, left + badgeW * (debugTier ? 0.32f : 0.28f),
+                    top + badgeH * 0.82f, badgeTextPaint);
+            canvas.drawText("+" + enchant, left + badgeW * (debugTier ? 0.82f : 0.74f),
+                    top + badgeH * 0.82f, badgeTextPaint);
         }
         else
         {
-            badgeTextPaint.setTextSize(badgeH * 0.86f);
+            badgeTextPaint.setTextSize(badgeH * (debugTier ? 0.62f : 0.86f));
             canvas.drawText(tierText, left + badgeW * 0.55f, top + badgeH * 0.84f, badgeTextPaint);
         }
 
